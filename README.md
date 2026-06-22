@@ -21,6 +21,35 @@ Faithful Remaster watches emulator texture-dump folders, processes new textures 
 - Azahar `pack.json` synchronization
 - Persistent settings, profiles, database, cache, and logs in `%APPDATA%\Faithful Remaster`
 
+
+## Before / After examples
+
+Real emulator captures across Dolphin, DuckStation, PCSX2, and PPSSPP:
+
+<table>
+  <tr>
+    <th width="50%">Original</th>
+    <th width="50%">Faithful Remaster</th>
+  </tr>
+  <tr>
+    <td><img src="docs/images/comparisons/dolphin_pop_sot_original.jpg" alt="Original Prince of Persia texture" width="100%"></td>
+    <td><img src="docs/images/comparisons/dolphin_pop_sot_enhanced.jpg" alt="Enhanced Prince of Persia texture" width="100%"></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <th width="50%">Original</th>
+    <th width="50%">Faithful Remaster</th>
+  </tr>
+  <tr>
+    <td><img src="docs/images/comparisons/duckstation_soul_reaver_title_original.jpg" alt="Original Soul Reaver title screen" width="100%"></td>
+    <td><img src="docs/images/comparisons/duckstation_soul_reaver_title_enhanced.jpg" alt="Enhanced Soul Reaver title screen" width="100%"></td>
+  </tr>
+</table>
+
+[View the full comparison gallery](docs/COMPARISONS.md)
+
 ## Supported emulators
 
 - Dolphin
