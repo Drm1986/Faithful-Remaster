@@ -1,10 +1,14 @@
 # ComfyUI setup
 
-1. Install ComfyUI.
-2. Install the required checkpoint, ControlNet model, and upscale model.
-3. Load the UI workflow to inspect or edit it.
-4. Export API JSON after changes.
-5. Select the API workflow inside Faithful Remaster.
-6. Use Auto Detect Nodes.
+1. Install and launch ComfyUI.
+2. Confirm its API is available, normally at `http://127.0.0.1:8188`.
+3. Install the required models:
+   - `4x-UltraSharpV2.safetensors`
+   - `controlnet-tile-sdxl-1.0.safetensors`
+   - `dreamshaperXL_lightningDPMSDE.safetensors`
+4. Open the bundled UI workflows in ComfyUI and verify that all nodes load.
+5. In Faithful Remaster, select the bundled API workflows.
+6. Press **Auto Detect All Nodes**.
+7. Use **Test ComfyUI** before starting folder monitoring.
 
-Default URL: `http://127.0.0.1:8188`
+The exact model and custom-node folders depend on the ComfyUI installation.
