@@ -1,0 +1,27 @@
+Faithful Remaster v11.10.22 release-readiness validation
+
+Purpose:
+- Built from Faithful-Remaster-v11.10.21-Version-Sync-Windows.zip.
+- Keeps VERSION as the single source of truth.
+- Updates runtime fallback version to 11.10.22.
+- Updates universal layer fallback to 11.10.22.
+- Adds GitHub-ready README, tutorial, release notes, release body, checklist and video plan.
+
+Code/workflow safety:
+- No bundled workflow JSON files modified.
+- No processing pipeline logic intentionally changed.
+- No cache/hash logic intentionally changed.
+- No emulator folder-routing logic intentionally changed.
+
+Expected runtime values:
+- VERSION = 11.10.22
+- APP_VERSION = 11.10.22
+- APP_TITLE = Faithful Remaster v11.10.22
+
+Manual smoke test required before publishing:
+- Open GUI and confirm visible v11.10.22.
+- Validate one small profile.
+- Test ComfyUI.
+- Process a few textures.
+- Check Texture Manager live counters.
+- Test Batch Queue Skip/Previous/Stop.

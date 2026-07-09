@@ -1,0 +1,14 @@
+Faithful Remaster v11.10.22 version audit
+
+Active runtime version sources:
+- VERSION: 11.10.22
+- faithful_remaster.py fallback: 11.10.22
+- faithful_universal.py fallback: 11.10.22
+- faithful_universal.py layer marker: 11.10.22-github-release-docs-v1
+
+Validated import result:
+- APP_VERSION: 11.10.22
+- APP_TITLE: Faithful Remaster v11.10.22
+
+Important note:
+Historical changelog and note files may mention older versions such as v11.10.16, v11.10.17, v11.10.20 or v11.10.21 as part of release history. These are documentation history entries, not active runtime version sources.

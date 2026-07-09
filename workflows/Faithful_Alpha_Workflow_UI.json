@@ -1,6 +1,6 @@
 {
-  "id": "3e211ced-8811-4b36-aabf-ddd073b4c518",
-  "revision": 0,
+  "id": "4415c3af-9752-4b54-a689-bdb12ef89c92",
+  "revision": 1,
   "last_node_id": 12,
   "last_link_id": 16,
   "nodes": [
@@ -295,7 +295,7 @@
         "ver": "0.24.1"
       },
       "widgets_values": [
-        "ComfyUI"
+        "Faithful_Alpha"
       ]
     }
   ],

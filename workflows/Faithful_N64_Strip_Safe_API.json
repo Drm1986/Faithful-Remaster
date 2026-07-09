@@ -1,0 +1,22 @@
+{
+  "1": {
+    "inputs": {"image": "n64_strip_input.png"},
+    "class_type": "LoadImage",
+    "_meta": {"title": "N64 Strip Input"}
+  },
+  "2": {
+    "inputs": {"model_name": "RealESRGAN_x4plus.safetensors"},
+    "class_type": "UpscaleModelLoader",
+    "_meta": {"title": "Conservative 4x Upscale Model"}
+  },
+  "3": {
+    "inputs": {"upscale_model": ["2", 0], "image": ["1", 0]},
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {"title": "N64 Strip Safe Upscale"}
+  },
+  "4": {
+    "inputs": {"filename_prefix": "Faithful_N64_Strip_Safe", "images": ["3", 0]},
+    "class_type": "SaveImage",
+    "_meta": {"title": "Save N64 Strip"}
+  }
+}

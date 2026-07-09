@@ -1,0 +1,19 @@
+Faithful Remaster v11.10.22 Version Sync validation
+
+Active version sync checks:
+- VERSION = 11.10.22
+- faithful_remaster.py loads APP_VERSION from VERSION.
+- faithful_remaster.py fallback is 11.10.22.
+- faithful_universal.py preserves the core APP_VERSION and rebuilds APP_TITLE from it.
+- faithful_universal.py fallback is 11.10.22.
+
+Validated command:
+python3 -c "import faithful_remaster as fr; import faithful_universal as fu; fu.install(fr); print(fr.APP_VERSION); print(fr.APP_TITLE)"
+
+Expected output:
+11.10.22
+Faithful Remaster v11.10.22
+
+Notes:
+- Older version numbers in CHANGELOG and historical release notes are expected.
+- No workflow JSON files changed for this release-readiness package.

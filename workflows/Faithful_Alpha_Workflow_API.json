@@ -22,7 +22,7 @@
   },
   "5": {
     "inputs": {
-      "filename_prefix": "ComfyUI",
+      "filename_prefix": "Faithful_Alpha",
       "images": [
         "12",
         0

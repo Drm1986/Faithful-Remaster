@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "active_backend_id": "default_comfyui",
+  "backends": [
+    {
+      "id": "default_comfyui",
+      "name": "Local ComfyUI",
+      "type": "comfyui",
+      "api_url": "http://127.0.0.1:8188",
+      "start_file": "",
+      "command_template": "",
+      "enabled": true
+    },
+    {
+      "id": "remote_comfyui",
+      "name": "Remote ComfyUI",
+      "type": "comfyui",
+      "api_url": "http://192.168.1.2:8188",
+      "start_file": "",
+      "command_template": "",
+      "enabled": false
+    },
+    {
+      "id": "external_command",
+      "name": "External Command",
+      "type": "external_command",
+      "api_url": "",
+      "start_file": "",
+      "command_template": "python custom_backend.py --input \"{input}\" --output \"{output}\" --workflow \"{workflow_api}\" --task \"{task_type}\"",
+      "enabled": false
+    }
+  ]
+}

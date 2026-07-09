@@ -1,0 +1,32 @@
+Faithful Remaster v11.10.22 validation
+
+- Built from Faithful-Remaster-v11.10.21-Version-Sync-Windows.zip.
+- VERSION single source updated to 11.10.22.
+- APP_VERSION resolves to 11.10.22.
+- APP_TITLE resolves to Faithful Remaster v11.10.22.
+- Universal layer preserves APP_VERSION and no longer overrides the UI with old release numbers.
+- Added GitHub-ready README/tutorial/release docs only.
+- Bundled workflow JSON files are unchanged from v11.10.21.
+- Processing logic, cache hash behavior, Alpha route, EFB quarantine, workflow selection and Batch Queue logic are preserved.
+
+Faithful Remaster v11.10.21 validation
+
+- Built from Faithful-Remaster-v11.10.20-Batch-Queue-Previous-Windows.zip.
+- Added VERSION single source: 11.10.21.
+- APP_VERSION now loads from VERSION.
+- Removed the stale universal-layer app-version override that forced v11.10.17.
+- UI-visible APP_TITLE resolves to Faithful Remaster v11.10.21 after universal install.
+- No workflows or processing logic changed.
+
+Previous validation notes:
+Faithful Remaster v11.10.20 validation
+
+- Built from Faithful-Remaster-v11.10.19-Batch-Queue-Skip-Hardened-Windows.zip.
+- APP_VERSION updated to 11.10.20.
+- Added Batch Queue Previous game button.
+- Previous is disabled on the first profile and during pending navigation.
+- Stop Batch remains whole-queue stop.
+- Skip to next game remains forward-only navigation.
+- Workflows unchanged.
+- py_compile passed.
+- Zip integrity test passed.

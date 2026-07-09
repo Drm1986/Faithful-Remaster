@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "provider": "libretro_thumbnails",
+  "style": "Named_Boxarts",
+  "repositories": {
+    "Dolphin": [
+      "Nintendo - GameCube",
+      "Nintendo - Wii"
+    ],
+    "Flycast \u2014 Dreamcast / Naomi / Atomiswave": [
+      "Sega - Dreamcast"
+    ],
+    "DuckStation": [
+      "Sony - PlayStation"
+    ],
+    "PCSX2": [
+      "Sony - PlayStation 2"
+    ],
+    "PPSSPP": [
+      "Sony - PlayStation Portable"
+    ],
+    "Azahar / Citra": [
+      "Nintendo - Nintendo 3DS"
+    ],
+    "Nintendo 64 / RMG": [
+      "Nintendo - Nintendo 64"
+    ],
+    "Nintendo 64 / Project64": [
+      "Nintendo - Nintendo 64"
+    ]
+  },
+  "base_urls": [
+    "https://thumbnails.libretro.com/{repository}/{style}/{title}.png",
+    "https://raw.githubusercontent.com/libretro-thumbnails/{repository_slug}/master/{style}/{title}.png"
+  ]
+}
