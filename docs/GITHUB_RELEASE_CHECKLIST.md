@@ -10,7 +10,7 @@ Use this checklist before publishing or replacing release assets.
 - [ ] `docs/COMFYUI_MODEL_REQUIREMENTS.md` exists.
 - [ ] `docs/setup_comfy.md` links to the model requirements guide.
 - [ ] No internal planning notes are included.
-- [ ] No Arabic owner notes are included.
+- [ ] No private owner notes are included.
 
 ## ComfyUI requirements
 
