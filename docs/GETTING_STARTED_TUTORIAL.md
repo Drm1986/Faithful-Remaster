@@ -1,6 +1,6 @@
 # Faithful Remaster — Complete Getting Started Tutorial
 
-This tutorial walks through the safest way to create your first texture-remastering profile, process a small test set, review the outputs, and then scale up to Batch Queue.
+This tutorial walks through the safest way to install requirements, create your first texture-remastering profile, process a small test set, review the outputs, and then scale up to Batch Queue.
 
 The tutorial assumes you are using the Windows package for **Faithful Remaster v11.10.22**.
 
@@ -9,7 +9,7 @@ The tutorial assumes you are using the Windows package for **Faithful Remaster v
 Emulators can dump the original textures used by a game. They can also load replacement textures if those replacements keep the expected filename and folder structure. Faithful Remaster sits between those two folders:
 
 ```text
-Emulator Dump Folder  →  Faithful Remaster  →  Emulator Load/Replacement Folder
+Emulator Dump Folder  ->  Faithful Remaster  ->  Emulator Load/Replacement Folder
 ```
 
 The app watches the dump folder, sends new textures to the selected workflow/backend, and writes finished textures to the matching output path.
@@ -21,12 +21,49 @@ You need:
 - A Windows PC.
 - An emulator with texture dumping and custom texture loading.
 - ComfyUI running locally or remotely.
-- The models and nodes required by your selected ComfyUI workflow.
-- Enough free disk space for dumps, outputs, cache, and temporary files.
+- The models required by the bundled ComfyUI workflows.
+- Enough free disk space for dumps, outputs, cache, checkpoints, ControlNet models, and upscalers.
 
 Recommended first test: use a small game area with only a few dumped textures. Do not start with a huge full-game dump.
 
-## 3. Extract the package
+## 3. Install ComfyUI and required models
+
+Faithful Remaster does not include AI model weights. The bundled workflows require ComfyUI plus specific model files.
+
+Read this file before processing:
+
+```text
+docs/COMFYUI_MODEL_REQUIREMENTS.md
+```
+
+Required for the bundled v11.10.22 workflows:
+
+```text
+ComfyUI/models/upscale_models/4x-UltraSharpV2.safetensors
+ComfyUI/models/upscale_models/RealESRGAN_x4plus.safetensors
+ComfyUI/models/controlnet/controlnet-tile-sdxl-1.0.safetensors
+ComfyUI/models/checkpoints/dreamshaperXL_lightningDPMSDE.safetensors
+```
+
+Important notes:
+
+- The workflow filenames must match exactly.
+- The bundled RGB workflows currently use `dreamshaperXL_lightningDPMSDE.safetensors` as the SDXL checkpoint.
+- Juggernaut XL is supported only if you edit the workflow checkpoint node and export/update the API workflow.
+- Restart ComfyUI after adding or renaming model files.
+
+Useful official/source links:
+
+- ComfyUI: https://github.com/comfy-org/ComfyUI
+- ComfyUI docs: https://docs.comfy.org/
+- ComfyUI-Manager: https://github.com/comfy-org/ComfyUI-Manager
+- UltraSharpV2: https://huggingface.co/Kim2091/UltraSharpV2/blob/main/4x-UltraSharpV2.safetensors
+- RealESRGAN x4plus safetensors: https://huggingface.co/GraydientPlatformAPI/safetensor-upscalers/blob/main/RealESRGAN_x4plus.safetensors
+- ControlNet Tile SDXL: https://huggingface.co/f5aiteam/ComfyUI/blob/main/ControlNet/controlnet-tile-sdxl-1.0.safetensors
+- DreamShaper XL Lightning DPMSDE: https://huggingface.co/oguzm/dreamshaper-xl-lightning-dpmsde/blob/main/dreamshaperXL_lightningDPMSDE.safetensors
+- Optional Juggernaut XL v9 checkpoint: https://huggingface.co/RunDiffusion/Juggernaut-XL-v9/blob/main/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors
+
+## 4. Extract the package
 
 Extract the ZIP to a simple folder such as:
 
@@ -42,13 +79,15 @@ Run:
 Faithful Remaster.exe
 ```
 
-## 4. Start ComfyUI
+## 5. Start ComfyUI
 
 Start ComfyUI before processing. The default backend points to:
 
 ```text
 http://127.0.0.1:8188
 ```
+
+Before using Faithful Remaster, open the bundled UI workflows in ComfyUI and verify that all nodes and models load.
 
 In Faithful Remaster:
 
@@ -59,7 +98,7 @@ In Faithful Remaster:
 
 If the test fails, check that ComfyUI is open, the port is correct, and the required workflow nodes load in ComfyUI.
 
-## 5. Enable emulator texture dumping
+## 6. Enable emulator texture dumping
 
 Every emulator has two important options:
 
@@ -79,7 +118,7 @@ Common layouts:
 | PPSSPP | `...\PSP\TEXTURES\<GAME_ID>\new` | `...\PSP\TEXTURES\<GAME_ID>` |
 | Flycast | `...\Flycast\data\texdump\<GAME_ID>` | `...\Flycast\data\textures\<GAME_ID>` |
 
-## 6. Create or discover a profile
+## 7. Create or discover a profile
 
 Open **Profiles**.
 
@@ -101,7 +140,7 @@ Manual route:
 
 Do not continue until the profile paths are correct.
 
-## 7. Select workflows
+## 8. Select workflows
 
 Faithful Remaster uses separate workflow routes for different texture types.
 
@@ -121,7 +160,7 @@ Auto Detect All Nodes
 
 Then save the profile again.
 
-## 8. Validate the profile
+## 9. Validate the profile
 
 Press **Validate Profile** before starting.
 
@@ -137,7 +176,7 @@ A good profile should show:
 
 Fix validation warnings before a serious run.
 
-## 9. First small processing test
+## 10. First small processing test
 
 Do not start with the whole game. Start small.
 
@@ -153,7 +192,7 @@ Do not start with the whole game. Start small.
 
 If the in-game output looks wrong, stop and fix the workflow/profile before processing hundreds of files.
 
-## 10. Understand Texture Manager filters
+## 11. Understand Texture Manager filters
 
 Texture Manager can show different views:
 
@@ -164,7 +203,7 @@ Texture Manager can show different views:
 
 Use these filters to avoid guessing what still needs processing.
 
-## 11. Use Compare modes before replacing large sets
+## 12. Use Compare modes before replacing large sets
 
 For one selected active texture, use **Compare modes** to compare available output modes. This is useful before committing to a workflow style for a full pack.
 
@@ -178,7 +217,7 @@ A good comparison pass checks:
 - transparency and halos;
 - faithfulness to the original art direction.
 
-## 12. Quarantine risky textures
+## 13. Quarantine risky textures
 
 Some textures are not normal game assets. Dynamic EFB/cutscene/framebuffer-like dumps can break packs or waste time if processed blindly.
 
@@ -192,7 +231,7 @@ Use quarantine tools when a texture appears to be:
 
 Quarantine is a safety workflow, not a failure.
 
-## 13. Batch Queue workflow
+## 14. Batch Queue workflow
 
 After one profile works, Batch Queue can process multiple profiles.
 
@@ -213,7 +252,7 @@ Controls:
 - **Skip to next game** safely stops the current profile and advances.
 - **Previous game** safely stops the current profile and returns to the previous queued profile.
 
-## 14. Cache and processed logs
+## 15. Cache and processed logs
 
 Faithful Remaster keeps cache and processed logs so repeated runs do not redo everything unnecessarily.
 
@@ -223,7 +262,7 @@ Be careful when changing workflows:
 - If a workflow was broken, failed textures may need retrying after the workflow/backend is fixed.
 - Do not delete cache blindly unless you understand what you are resetting.
 
-## 15. Recommended quality-control pass
+## 16. Recommended quality-control pass
 
 Before sharing a texture pack:
 
@@ -236,7 +275,7 @@ Before sharing a texture pack:
 - check for shimmering or over-sharpened textures;
 - check that no framebuffer/cutscene dumps were accidentally replaced.
 
-## 16. Common problems
+## 17. Common problems
 
 ### ComfyUI test fails
 
@@ -244,6 +283,14 @@ Before sharing a texture pack:
 - Confirm the API URL.
 - Check firewall/security tools.
 - Open the ComfyUI URL in a browser.
+- Open the bundled UI workflow in ComfyUI and check for missing models or missing nodes.
+
+### A workflow opens with red missing models
+
+- Check `docs/COMFYUI_MODEL_REQUIREMENTS.md`.
+- Confirm every model is in the correct ComfyUI folder.
+- Confirm filenames match exactly.
+- Restart ComfyUI after adding models.
 
 ### Output exists but emulator does not show it
 
@@ -258,32 +305,3 @@ Before sharing a texture pack:
 - Press Refresh List.
 - Confirm the profile points to the active dump folder.
 - Confirm the emulator is dumping into the folder you selected.
-- During watching, wait for live refresh to complete.
-
-### Batch Queue reaches a bad pack
-
-- Use **Skip to next game** to continue.
-- Use **Previous game** if you need to return to the previous queued profile.
-- Use **Stop Batch** only when you want to stop the whole queue.
-
-## 17. First release recommendation
-
-For your first public pack or showcase, choose one game and one small visual route. Do not advertise a huge compatibility claim before testing several scenes.
-
-Best public demo structure:
-
-1. Original game footage.
-2. Faithful Remaster output footage.
-3. Split-screen comparison.
-4. Quick view of the workflow/profile.
-5. Show Texture Manager filters.
-6. Show Batch Queue only after it is stable.
-
-## 18. Where to go next
-
-After your first successful profile:
-
-- read `docs/GITHUB_RELEASE_CHECKLIST.md` if you maintain the GitHub release;
-- read `docs/SHOWCASE_VIDEO_PLAN.md` before recording the announcement video;
-- keep a backup of working profiles and outputs;
-- report bugs with screenshots, logs, and exact emulator folder paths.

@@ -75,7 +75,7 @@ Faithful-Remaster-v11.10.22-GitHub-Release-Tutorial-Windows.zip.sha256.txt
 
 ## After publishing
 
-Use this stable latest-release link in the README/video description once the release is live:
+Use this stable latest-release link after the release is live:
 
 ```text
 https://github.com/Drm1986/Faithful-Remaster/releases/latest
@@ -87,7 +87,7 @@ Direct asset link after publishing:
 https://github.com/Drm1986/Faithful-Remaster/releases/latest/download/Faithful-Remaster-v11.10.22-GitHub-Release-Tutorial-Windows.zip
 ```
 
-## Check before video recording
+## Final public release check
 
 - The repo README says `Current release: v11.10.22`.
 - The app top title says `Faithful Remaster v11.10.22`.

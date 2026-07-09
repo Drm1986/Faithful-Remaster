@@ -2,9 +2,7 @@
 
 - Reworked `README.md` into a GitHub-ready landing page and quick-start guide.
 - Added `docs/GETTING_STARTED_TUTORIAL.md` as a full beginner walkthrough.
-- Added `docs/GITHUB_RELEASE_CHECKLIST.md` for maintainer publishing validation.
-- Added `GITHUB_RELEASE_BODY_v11.10.22.md` and `RELEASE_NOTES_v11.10.22.md` for release publishing.
-- Added `docs/SHOWCASE_VIDEO_PLAN.md` for the announcement video after release validation.
+- Added `RELEASE_NOTES_v11.10.22.md` for release publishing.
 - Added basic GitHub issue templates for bug reports and questions.
 - Updated package runtime version to `11.10.22` using the existing VERSION-file source.
 - No workflow JSON files or core processing logic changed.
@@ -44,7 +42,7 @@
 - No workflow JSON files changed.
 - No processing logic changed.
 
-# Faithful Remaster v11.10.17 — UI Version + Azahar Action Visibility
+# Faithful Remaster v11.10.16 — Live Texture Manager Refresh
 
 ## Fixed
 

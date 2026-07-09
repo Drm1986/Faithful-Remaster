@@ -2,7 +2,7 @@
 
 **Faithful Remaster** is a Windows texture-remastering workspace for emulator texture packs. It watches texture dump folders, sends RGB and Alpha work through replaceable ComfyUI workflows, writes the finished files into the emulator's load/replacement folder, and helps you audit what is missing, existing, orphaned, quarantined, cached, or ready for review.
 
-This release is built on **v11.10.21 Version Sync** and focuses on making the project ready for a serious GitHub release: clearer onboarding, stronger tutorial material, release notes, publishing checklist, and a stable public-facing README. No bundled workflow JSON files were changed.
+This release is built on **v11.10.21 Version Sync** and focuses on making the project ready for a serious GitHub release: clearer onboarding, stronger tutorial material, release notes, and a stable public-facing README. No bundled workflow JSON files were changed.
 
 ![Faithful Remaster UI](docs/UI_PREVIEW.png)
 
@@ -75,13 +75,31 @@ For the full walkthrough, read [`docs/GETTING_STARTED_TUTORIAL.md`](docs/GETTING
 
 ## Required ComfyUI setup
 
-The bundled workflows expect a working ComfyUI installation and the models/custom nodes used by your selected workflow. The basic local backend is:
+The bundled workflows expect a working ComfyUI installation and specific model files. Faithful Remaster does not include ComfyUI, checkpoints, ControlNet models, or upscaler weights.
+
+Default local backend:
 
 ```text
 Local ComfyUI API: http://127.0.0.1:8188
 ```
 
-See [`docs/setup_comfy.md`](docs/setup_comfy.md) and [`docs/GETTING_STARTED_TUTORIAL.md`](docs/GETTING_STARTED_TUTORIAL.md) before processing a full game.
+Required files for the bundled v11.10.22 workflows:
+
+```text
+ComfyUI/models/upscale_models/4x-UltraSharpV2.safetensors
+ComfyUI/models/upscale_models/RealESRGAN_x4plus.safetensors
+ComfyUI/models/controlnet/controlnet-tile-sdxl-1.0.safetensors
+ComfyUI/models/checkpoints/dreamshaperXL_lightningDPMSDE.safetensors
+```
+
+Read the full requirement table before processing:
+
+- [`docs/COMFYUI_MODEL_REQUIREMENTS.md`](docs/COMFYUI_MODEL_REQUIREMENTS.md)
+- [`docs/setup_comfy.md`](docs/setup_comfy.md)
+- [`docs/GETTING_STARTED_TUTORIAL.md`](docs/GETTING_STARTED_TUTORIAL.md)
+
+Note: the bundled RGB workflows currently reference `dreamshaperXL_lightningDPMSDE.safetensors`. If you want to use Juggernaut XL instead, install it as a checkpoint and update/export the workflow so the API workflow points to the Juggernaut filename.
+
 
 ## Emulator folder layouts
 
@@ -171,7 +189,6 @@ Before making a public GitHub release, run this checklist:
 - Press **Previous game** during a controlled run.
 - Confirm no workflow JSON files were unintentionally modified.
 
-A publishing checklist is included at [`docs/GITHUB_RELEASE_CHECKLIST.md`](docs/GITHUB_RELEASE_CHECKLIST.md).
 
 ## Troubleshooting
 
@@ -199,13 +216,9 @@ Always keep backups of important texture packs before large processing sessions.
 ## Files included for this release
 
 - `README.md` — public GitHub front page.
-- `README_AR.md` — Arabic owner notes and publishing guide.
 - `CHANGELOG.md` — release history.
 - `RELEASE_NOTES_v11.10.22.md` — clean release notes.
-- `GITHUB_RELEASE_BODY_v11.10.22.md` — copy-paste GitHub release body.
 - `docs/GETTING_STARTED_TUTORIAL.md` — full tutorial.
-- `docs/GITHUB_RELEASE_CHECKLIST.md` — release publishing checklist.
-- `docs/SHOWCASE_VIDEO_PLAN.md` — post-release video plan.
 
 ## Version lineage
 

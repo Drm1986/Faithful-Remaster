@@ -5,7 +5,7 @@ Purpose:
 - Keeps VERSION as the single source of truth.
 - Updates runtime fallback version to 11.10.22.
 - Updates universal layer fallback to 11.10.22.
-- Adds GitHub-ready README, tutorial, release notes, release body, checklist and video plan.
+- Adds GitHub-ready README, tutorial, release notes and release body.
 
 Code/workflow safety:
 - No bundled workflow JSON files modified.
