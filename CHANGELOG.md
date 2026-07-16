@@ -1,67 +1,71 @@
-# Faithful Remaster v11.10.22 — GitHub Release + Full Tutorial
+# Faithful Remaster Changelog
 
-- Reworked `README.md` into a GitHub-ready landing page and quick-start guide.
-- Added `docs/GETTING_STARTED_TUTORIAL.md` as a full beginner walkthrough.
-- Added `RELEASE_NOTES_v11.10.22.md` for release publishing.
-- Added basic GitHub issue templates for bug reports and questions.
-- Updated package runtime version to `11.10.22` using the existing VERSION-file source.
-- No workflow JSON files or core processing logic changed.
+## v11.10.31
 
-# Faithful Remaster v11.10.21 — Version Sync
+### Added
+- DuckStation-specific duplicate detection.
+- Live duplicate guard while watching new DuckStation texture dumps.
+- FF8-safe handling for repeated DuckStation texture uploads.
+- Texture Manager actions for ST/STP cleanup in DuckStation profiles.
+- Vertical scrolling in Texture Manager.
+- Batch Queue controls: Skip to next game and Previous game.
 
-- Fixed the version mismatch where the universal feature layer could still force the UI title/header back to v11.10.17.
-- Added bundled VERSION file as the release version source for the GUI.
-- The universal layer now preserves the core APP_VERSION instead of hardcoding its own app version.
-- No workflow or processing logic changes.
+### Improved
+- Texture Manager scan speed on large dump folders.
+- DuckStation duplicate cleanup now runs before textures are sent to ComfyUI.
+- FF8 thin background strips are preserved instead of being treated as garbage.
+- ST/STP textures are not globally removed; only safe duplicate matches are handled automatically.
+- Cleanup options are now shown only for relevant emulator profiles.
+- Cleanup actions move files to quarantine instead of permanently deleting them.
 
-# Faithful Remaster v11.10.20 — Batch Queue Previous Game
+### Fixed
+- Texture Manager action buttons could be inaccessible on smaller screens.
+- Batch Queue state handling around skip, previous, and profile switching.
+- Reduced unnecessary ComfyUI jobs caused by repeated DuckStation dumps.
 
-- Built on v11.10.19 Batch Queue Skip Hardening.
-- Added **⏮ Previous game** to the Batch Queue controls.
-- Previous safely stops the active profile, then returns to the previous queued profile.
-- Previous is disabled on the first queued profile and during pending Skip/Previous navigation.
-- Previous does not delete outputs, processed history, or hash cache.
-- Stop Batch still stops the whole queue; Skip still moves forward only.
-- No workflow JSON files or texture processing routes were changed.
+## v11.10.30
 
-# Faithful Remaster v11.10.19 — Batch Queue Skip Hardening
+- Added vertical scrolling to the main Texture Manager body.
+- Improved access to Texture Manager actions on compact screens.
 
-- Rebuilt from the clean v11.10.17 UI/Azahar visibility package.
-- Added **⏭ Skip to next game** to the Batch Queue control row.
-- Skip stops only the active profile and then advances to the next queued profile.
-- Added duplicate-click protection: skip is disabled after the first skip request until the next profile starts.
-- Preserved **Stop Batch** behavior for stopping the whole queue.
-- Hardened batch startup failure handling so a profile that cannot start stops the batch cleanly instead of being treated as finished.
-- No workflow JSON files changed.
-- No texture processing logic changed.
+## v11.10.29
 
-# Faithful Remaster v11.10.17 — UI Version + Azahar Action Visibility
+- Added manual ST/STP mass quarantine actions for DuckStation profiles.
+- Added Texture Manager cleanup actions for dump and replacement folders.
 
-- Fixed app title/version being overwritten by the universal layer as v11.10.12.
-- Refresh Azahar Metadata is now visible only while editing an Azahar / Citra profile.
-- No workflow JSON files changed.
-- No processing logic changed.
+## v11.10.28
 
-# Faithful Remaster v11.10.16 — Live Texture Manager Refresh
+- Added duplicate-only ST/STP guard.
+- Kept non-duplicated ST/STP textures active.
+- Added replacement-folder duplicate cleanup support.
 
-## Fixed
+## v11.10.27
 
-- Texture Manager no longer requires manual **Refresh List** to see new dumps, newly created outputs, deleted outputs, restored quarantines, or quarantine/cleanup moves.
-- During **Start Watching** and **Batch Queue**, worker log events now invalidate the Texture Manager index and trigger a throttled background refresh.
-- Added a low-frequency safety poll while watching/batch is active, so dumps that appear before a log line is emitted are still discovered.
-- Existing/Missing/Orphaned counters update automatically while the game is dumping textures.
+- Added pre-remaster quarantine for matching ST/STP texpage duplicates.
+- Quarantine stores restore metadata and remains reversible.
 
-## Performance / stability
+## v11.10.26
 
-- Texture Manager scans now reuse cached visual metadata for unchanged files using path + mtime + file size.
-- Large packs avoid re-opening every image on every live refresh.
-- Auto-refresh never starts a second scan while one is already running.
-- Manual **Refresh List** remains available and still forces a full scan.
+- Improved Texture Manager fast scanning for large dump folders.
+- Deferred expensive visual classification until needed.
 
-## Unchanged
+## v11.10.25
 
-- No workflow JSON files changed.
-- No Clean Heart / Strong Believer / Alpha / N64 logic changed.
-- No processing logic changed.
-- v11.10.15 Batch Failure Advance behavior is preserved.
-- v11.10.14 PPSSPP orphan fix is preserved.
+- Preserved Texture Manager selection during manual and automatic refresh.
+- Reduced selection jumps while watching.
+
+## v11.10.24
+
+- Added sparse alpha/mask quarantine on Start Watching and Batch Queue profile start.
+- Added live fallback quarantine for sparse alpha/mask dumps.
+
+## v11.10.23
+
+- Added conservative detection for tiny sparse alpha/mask dumps.
+- Added fallback skip behavior for sparse alpha/mask textures.
+
+## v11.10.22
+
+- Prepared the first public GitHub release package.
+- Added stronger README, tutorial, release checklist, and ComfyUI setup notes.
+- No bundled workflow JSON files were changed.
