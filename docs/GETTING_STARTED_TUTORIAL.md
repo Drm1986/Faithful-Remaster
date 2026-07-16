@@ -162,7 +162,9 @@ Then save the profile again.
 
 ## 9. Validate the profile
 
-Press **Validate Profile** before starting. A good profile should show:
+Press **Validate Profile** before starting.
+
+A good profile should show:
 
 - dump folder exists;
 - output folder exists or can be created;

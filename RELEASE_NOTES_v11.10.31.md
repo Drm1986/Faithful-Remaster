@@ -1,30 +1,22 @@
 # Faithful Remaster v11.10.31
 
-This update focuses on DuckStation support, Texture Manager usability, duplicate cleanup, and profile-specific safety options.
+This release updates the public Windows package and documentation from v11.10.22 to v11.10.31.
 
-## Highlights
+## Main changes
 
-- **DuckStation live duplicate guard**
-- **FF8-friendly texture handling**
-- **Faster Texture Manager scanning**
-- **Vertical scrolling in Texture Manager**
-- **ST/STP cleanup tools for DuckStation profiles**
-- **Batch Queue Skip and Previous controls**
-- **Platform-specific cleanup options now appear only where relevant**
-- **Safer quarantine-based cleanup before textures are sent to ComfyUI**
+- DuckStation live duplicate guard.
+- FF8-friendly texture handling.
+- Faster Texture Manager scanning.
+- Texture Manager vertical scrolling.
+- ST/STP cleanup tools for DuckStation profiles.
+- Batch Queue Skip and Previous controls.
+- Platform-specific cleanup options.
+- Safer quarantine-based cleanup before textures are sent to ComfyUI.
 
 ## Notes
 
-### DuckStation / FF8
-
-- Thin background strips are preserved.
-- Repeated texture uploads are handled conservatively.
+- Thin FF8 background strips are preserved.
+- Repeated DuckStation texture uploads are handled conservatively.
 - ST/STP textures are not removed globally.
-
-### Dolphin / PPSSPP
-
-- Cinematic and cutscene cleanup options remain available only for relevant profiles.
-
-### Dolphin
-
+- Cinematic and cutscene cleanup options remain limited to Dolphin and PPSSPP profiles.
 - Sparse alpha duplicate cleanup remains Dolphin-only.
