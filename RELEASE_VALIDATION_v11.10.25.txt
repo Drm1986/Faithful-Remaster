@@ -1,9 +1,0 @@
-Faithful Remaster v11.10.25 release validation
-
-- VERSION = 11.10.25
-- APP_VERSION resolves to 11.10.25
-- APP_TITLE resolves to Faithful Remaster v11.10.25
-- Processing pipeline marker = 11.10.25-manager-refresh-selection-v1
-- faithful_remaster.py compiles successfully
-- Texture Manager refresh now captures and restores selected texture/viewport state
-- No workflow JSON changes

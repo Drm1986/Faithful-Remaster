@@ -1,6 +1,0 @@
-Faithful Remaster v11.10.25 version audit
-
-- VERSION: 11.10.25
-- APP_VERSION: 11.10.25
-- APP_TITLE: Faithful Remaster v11.10.25
-- Processing pipeline marker: 11.10.25-manager-refresh-selection-v1
