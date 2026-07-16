@@ -1,4 +1,4 @@
-# Faithful Remaster v11.10.31
+﻿# Faithful Remaster v11.10.31
 
 **Faithful Remaster** is a Windows texture-remastering workspace for emulator texture packs. It watches emulator dump folders, sends textures through replaceable ComfyUI workflows, writes finished files into the emulator load/replacement folder, and helps you audit missing, existing, orphaned, quarantined, cached, and ready textures.
 
@@ -73,7 +73,6 @@ Faithful Remaster does not bundle ComfyUI, model checkpoints, upscalers, or Cont
 
 Install ComfyUI separately, then add the models required by the workflow you choose. The bundled example workflows are designed around faithful 4x texture restoration and may use:
 
-- a checkpoint such as Juggernaut / RealVis or a compatible SDXL model;
 - ControlNet Tile SDXL;
 - RealESRGAN / Ultrasharp-style upscalers;
 - the standard custom nodes required by your selected workflow.
@@ -111,3 +110,4 @@ Dolphin notes:
 ## License
 
 See [`LICENSE`](LICENSE).
+
