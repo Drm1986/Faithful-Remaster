@@ -1,7 +1,0 @@
-Faithful Remaster v11.10.25 Version Sync validation
-
-- VERSION = 11.10.25
-- APP_VERSION resolves to 11.10.25.
-- APP_TITLE resolves to Faithful Remaster v11.10.25.
-- faithful_universal.py preserves APP_VERSION and falls back to 11.10.25 only if needed.
-- Processing pipeline marker = 11.10.25-manager-refresh-selection-v1.
