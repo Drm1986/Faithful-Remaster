@@ -1,4 +1,4 @@
-﻿# Faithful Remaster — Complete Getting Started Tutorial
+# Faithful Remaster — Complete Getting Started Tutorial
 
 This tutorial walks through the safest way to install requirements, create your first texture-remastering profile, process a small test set, review the outputs, and then scale up to Batch Queue.
 
@@ -6,10 +6,12 @@ The tutorial assumes you are using the Windows package for **Faithful Remaster v
 
 ## 1. What Faithful Remaster does
 
-Emulators can dump the original textures used by a game. They can also load replacement textures if those replacements keep the expected filename and folder structure. Faithful Remaster sits between those two folders:
+Emulators can dump the original textures used by a game. They can also load replacement textures if those replacements keep the expected filename and folder structure.
+
+Faithful Remaster sits between those two folders:
 
 ```text
-Emulator Dump Folder  ->  Faithful Remaster  ->  Emulator Load/Replacement Folder
+Emulator Dump Folder -> Faithful Remaster -> Emulator Load/Replacement Folder
 ```
 
 The app watches the dump folder, sends new textures to the selected workflow/backend, and writes finished textures to the matching output path.
@@ -109,12 +111,12 @@ Common layouts:
 
 | Emulator | Dump folder | Output folder |
 |---|---|---|
-| Dolphin | `%APPDATA%\Dolphin Emulator\Dump\Textures\<GAME_ID>` | `%APPDATA%\Dolphin Emulator\Load\Textures\<GAME_ID>` |
-| Azahar | `%APPDATA%\Azahar\dump\textures\<TITLE_ID>` | `%APPDATA%\Azahar\load\textures\<TITLE_ID>` |
-| PCSX2 | `...\textures\<SERIAL>\dumps` | `...\textures\<SERIAL>\replacements` |
-| DuckStation | `...\textures\<SERIAL>\dumps` | `...\textures\<SERIAL>\replacements` |
-| PPSSPP | `...\PSP\TEXTURES\<GAME_ID>\new` | `...\PSP\TEXTURES\<GAME_ID>` |
-| Flycast | `...\Flycast\data\texdump\<GAME_ID>` | `...\Flycast\data\textures\<GAME_ID>` |
+| Dolphin | `%APPDATA%\Dolphin Emulator\Dump\Textures\` | `%APPDATA%\Dolphin Emulator\Load\Textures\` |
+| Azahar | `%APPDATA%\Azahar\dump\textures\` | `%APPDATA%\Azahar\load\textures\` |
+| PCSX2 | `...\textures\dumps` | `...\textures\replacements` |
+| DuckStation | `...\textures\dumps` | `...\textures\replacements` |
+| PPSSPP | `...\PSP\TEXTURES\new` | `...\PSP\TEXTURES\` |
+| Flycast | `...\Flycast\data\texdump\` | `...\Flycast\data\textures\` |
 
 ## 7. Create or discover a profile
 
@@ -160,9 +162,7 @@ Then save the profile again.
 
 ## 9. Validate the profile
 
-Press **Validate Profile** before starting.
-
-A good profile should show:
+Press **Validate Profile** before starting. A good profile should show:
 
 - dump folder exists;
 - output folder exists or can be created;
@@ -304,7 +304,6 @@ Before sharing a texture pack:
 - Confirm the profile points to the active dump folder.
 - Confirm the emulator is dumping into the folder you selected.
 
-
 ## Sparse alpha/mask quarantine
 
 If a game produces thousands of tiny transparent mask files, keep **Quarantine sparse alpha/mask dumps before watching / each Batch profile** enabled.
@@ -312,4 +311,3 @@ If a game produces thousands of tiny transparent mask files, keep **Quarantine s
 When Start Watching begins, Faithful Remaster scans the full dump folder and moves matching tiny sparse alpha/mask dumps into reversible quarantine before the processing queue is built. This is especially useful for Super Mario Strikers-style 80x80 mask floods.
 
 Quarantined files are not deleted. They can be reviewed from the Texture Manager quarantine view.
-

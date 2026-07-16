@@ -1,30 +1,9 @@
-﻿# Changelog
-
-## Faithful Remaster v11.10.31
-
-### Added
-- DuckStation live duplicate guard.
-- FF8-friendly texture handling.
-- ST/STP cleanup tools for DuckStation profiles.
-- Batch Queue Skip and Previous controls.
-
-### Improved
-- Faster Texture Manager scanning.
-- Vertical scrolling in Texture Manager.
-- Safer duplicate cleanup before textures are sent to ComfyUI.
-- Platform-specific cleanup options now appear only where relevant.
-
-### Notes
-- Thin FF8 background strips are preserved.
-- Repeated DuckStation texture uploads are handled conservatively.
-- ST/STP textures are not removed globally.
-- Cinematic and cutscene cleanup options are limited to Dolphin and PPSSPP profiles.
-- Sparse alpha duplicate cleanup remains Dolphin-only.
 # Faithful Remaster Changelog
 
 ## v11.10.31
 
 ### Added
+
 - DuckStation-specific duplicate detection.
 - Live duplicate guard while watching new DuckStation texture dumps.
 - FF8-safe handling for repeated DuckStation texture uploads.
@@ -33,6 +12,7 @@
 - Batch Queue controls: Skip to next game and Previous game.
 
 ### Improved
+
 - Texture Manager scan speed on large dump folders.
 - DuckStation duplicate cleanup now runs before textures are sent to ComfyUI.
 - FF8 thin background strips are preserved instead of being treated as garbage.
@@ -41,6 +21,7 @@
 - Cleanup actions move files to quarantine instead of permanently deleting them.
 
 ### Fixed
+
 - Texture Manager action buttons could be inaccessible on smaller screens.
 - Batch Queue state handling around skip, previous, and profile switching.
 - Reduced unnecessary ComfyUI jobs caused by repeated DuckStation dumps.
@@ -91,4 +72,3 @@
 - Prepared the first public GitHub release package.
 - Added stronger README, tutorial, release checklist, and ComfyUI setup notes.
 - No bundled workflow JSON files were changed.
-

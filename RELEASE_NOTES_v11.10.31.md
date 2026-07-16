@@ -1,4 +1,4 @@
-﻿# Faithful Remaster v11.10.31
+# Faithful Remaster v11.10.31
 
 This update focuses on DuckStation support, Texture Manager usability, duplicate cleanup, and profile-specific safety options.
 
