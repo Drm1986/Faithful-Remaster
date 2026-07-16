@@ -26,7 +26,7 @@ Read the full model table here:
 docs/COMFYUI_MODEL_REQUIREMENTS.md
 ```
 
-Minimum required files for the bundled v11.10.22 workflows:
+Minimum required files for the bundled v11.10.25 workflows:
 
 ```text
 ComfyUI/models/upscale_models/4x-UltraSharpV2.safetensors

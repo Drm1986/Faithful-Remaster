@@ -1,0 +1,13 @@
+Faithful Remaster v11.10.31 validation
+
+Checks performed:
+- python -m py_compile faithful_remaster.py faithful_universal.py: PASS
+- DuckStation exact duplicate startup scanner: PASS
+- DuckStation live duplicate guard: PASS
+- STP/P and ST/T duplicate matcher: PASS
+- Zip integrity test: performed after packaging
+
+Notes:
+- DuckStation duplicate cleanup only acts on DuckStation profiles.
+- Cinematic/EFB/cutscene filters only act on Dolphin/PPSSPP profiles.
+- Sparse alpha/mask quarantine only acts on Dolphin profiles.

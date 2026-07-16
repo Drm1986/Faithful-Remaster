@@ -52,11 +52,11 @@ def _load_app_version():
             return version
     except Exception:
         pass
-    return "11.10.22"
+    return "11.10.31"
 
 APP_VERSION = _load_app_version()
 APP_TITLE = f"Faithful Remaster v{APP_VERSION}"
-PROCESSING_PIPELINE_VERSION = "11.10.5-alpha-route-guard-v1"
+PROCESSING_PIPELINE_VERSION = "11.10.31-duckstation-live-duplicate-guard-v1"
 APP_USER_MODEL_ID = "FaithfulRemaster.TextureClarity"
 # One reusable remote Comfy input name per application/thread prevents thousands
 # of abandoned UUID uploads while remaining collision-safe across app instances.
@@ -349,6 +349,12 @@ DEFAULT_CONFIG = {
     "processed_log": "processed.txt",
     "skip_cutscene_buffers": True,
     "skip_dynamic_efb_postprocess": True,
+    "skip_sparse_alpha_masks": True,
+    "auto_quarantine_sparse_alpha_masks_on_start": True,
+    "auto_quarantine_matching_stp_texpages_on_start": True,
+    "guard_matching_stp_texpages_before_process": True,
+    "duckstation_duplicate_cleanup_on_start": True,
+    "duckstation_live_duplicate_guard": True,
     "delete_skipped_cutscene_buffers": False,
     "auto_scan_delete_cutscene_buffers_on_start": False,
     "auto_quarantine_efb_cutscenes": False,
@@ -450,6 +456,9 @@ def new_profile_settings_for_emulator(emulator):
     settings["auto_quarantine_efb_cutscenes"] = str(emulator or "").strip() in AUTO_BUFFER_QUARANTINE_EMULATORS
     settings["auto_quarantine_live_threshold"] = 12
     settings["auto_quarantine_live_idle_seconds"] = 5.0
+    is_duckstation = str(emulator or "").strip() == "DuckStation"
+    settings["duckstation_duplicate_cleanup_on_start"] = is_duckstation
+    settings["duckstation_live_duplicate_guard"] = is_duckstation
     return settings
 
 
@@ -872,7 +881,7 @@ def detect_safe_blank_dump(path, cfg):
 
 
 QUARANTINE_MANIFEST_NAME = "_manifest.json"
-QUARANTINE_ROOT_NAMES = ("_buffer_quarantine", "_cleanup_quarantine")
+QUARANTINE_ROOT_NAMES = ("_buffer_quarantine", "_cleanup_quarantine", "_replacement_quarantine")
 _QUARANTINE_MANIFEST_LOCK = threading.RLock()
 
 
@@ -1030,6 +1039,427 @@ def quarantine_dumps_bulk(candidates, dump_folder, quarantine_session, manifest_
     return moved, failures
 
 
+
+_STP_TEXPAGE_DUPLICATE_PATTERNS = (
+    (re.compile(r"^(texpage-)STP(\d+)(-.+)$", re.IGNORECASE), r"\1P\2\3", "STP/P"),
+    (re.compile(r"^(texpage-)ST(\d+)(-.+)$", re.IGNORECASE), r"\1T\2\3", "ST/T"),
+)
+
+
+def matching_stp_texpage_counterpart_name(filename):
+    """Return the normal texpage name for an STP/ST duplicate, or None.
+
+    Soul Reaver can dump pairs such as:
+        texpage-P4-<same identity>.png
+        texpage-STP4-<same identity>.png
+
+    The RGB data can match while the alpha semantics differ, and using the STP
+    replacement can create black in-game alpha squares. This helper identifies
+    only exact filename twins so ordinary non-duplicate STP dumps are left alone.
+    """
+    name = str(filename or "")
+    for pattern, replacement, _label in _STP_TEXPAGE_DUPLICATE_PATTERNS:
+        if pattern.match(name):
+            return pattern.sub(replacement, name)
+    return None
+
+
+def find_matching_stp_texpage_duplicates(dump_folder, cfg=None, stop_event=None, progress_callback=None):
+    """Find STP/ST texpage dumps that have an exact matching P/T counterpart.
+
+    Returns a dict with candidates and scan counts. Candidates are tuples for
+    quarantine_dumps_bulk: (path, category, reason). The scan is filename-only
+    and intentionally does not open images, so it can run quickly on very large
+    dump folders before the remaster queue is built.
+    """
+    cfg = cfg or {}
+    dump_folder = Path(dump_folder)
+    load_text = str(cfg.get("load_folder") or "").strip()
+    load_folder = Path(load_text) if load_text else None
+    exclude_load_tree = bool(load_folder and is_path_within(load_folder, dump_folder))
+    process_tmp = bool(cfg.get("process_tmp_image_files", True))
+    candidates = []
+    seen = set()
+    scanned = stp_seen = matched = missing_counterpart = skipped_quarantine = 0
+
+    for path in dump_folder.rglob("*"):
+        if stop_event is not None and stop_event.is_set():
+            break
+        if not path.is_file():
+            continue
+        if is_inside_alpha_output_folder(path, dump_folder):
+            skipped_quarantine += 1
+            continue
+        if exclude_load_tree and is_path_within(path, load_folder):
+            continue
+        if any(part in QUARANTINE_ROOT_NAMES for part in path.parts):
+            skipped_quarantine += 1
+            continue
+        if path.name == QUARANTINE_MANIFEST_NAME:
+            skipped_quarantine += 1
+            continue
+        if not is_image_like(path, process_tmp):
+            continue
+        scanned += 1
+        counterpart_name = matching_stp_texpage_counterpart_name(path.name)
+        if not counterpart_name:
+            continue
+        stp_seen += 1
+        counterpart = path.with_name(counterpart_name)
+        if counterpart.is_file():
+            key = str(path.resolve()).casefold()
+            if key not in seen:
+                seen.add(key)
+                matched += 1
+                candidates.append((
+                    path,
+                    "stp_texpage_duplicate",
+                    f"Matching normal texpage exists: {counterpart.name}"
+                ))
+        else:
+            missing_counterpart += 1
+        if progress_callback and scanned % 5000 == 0:
+            try:
+                progress_callback(scanned, stp_seen, matched)
+            except Exception:
+                pass
+
+    return {
+        "candidates": candidates,
+        "scanned": scanned,
+        "stp_seen": stp_seen,
+        "matched": matched,
+        "missing_counterpart": missing_counterpart,
+        "skipped_quarantine": skipped_quarantine,
+    }
+
+
+
+def find_matching_stp_texpage_duplicates_in_tree(root_folder, process_tmp=True, stop_event=None, progress_callback=None):
+    """Find duplicate STP/ST texpage files in an arbitrary tree.
+
+    Unlike the dump preflight scanner, this helper is intentionally generic so
+    it can scan replacement/load folders too. It only returns STP/ST files when
+    the exact same directory also contains the normal P/T counterpart.
+    Non-duplicated STP/ST files are left alone because some Soul Reaver wall
+    textures may exist only as STP dumps and are useful.
+    """
+    root_folder = Path(root_folder)
+    candidates = []
+    scanned = stp_seen = matched = missing_counterpart = skipped = 0
+    seen = set()
+    for path in root_folder.rglob("*"):
+        if stop_event is not None and stop_event.is_set():
+            break
+        if not path.is_file():
+            continue
+        if any(part in QUARANTINE_ROOT_NAMES for part in path.parts):
+            skipped += 1
+            continue
+        if path.name == QUARANTINE_MANIFEST_NAME:
+            skipped += 1
+            continue
+        if not is_image_like(path, process_tmp):
+            continue
+        scanned += 1
+        counterpart_name = matching_stp_texpage_counterpart_name(path.name)
+        if not counterpart_name:
+            continue
+        stp_seen += 1
+        counterpart = path.with_name(counterpart_name)
+        if counterpart.is_file():
+            key = str(path.resolve()).casefold()
+            if key not in seen:
+                seen.add(key)
+                matched += 1
+                candidates.append((
+                    path,
+                    "stp_texpage_duplicate",
+                    f"Matching normal texpage exists: {counterpart.name}"
+                ))
+        else:
+            missing_counterpart += 1
+        if progress_callback and scanned % 5000 == 0:
+            try:
+                progress_callback(scanned, stp_seen, matched)
+            except Exception:
+                pass
+    return {
+        "candidates": candidates,
+        "scanned": scanned,
+        "stp_seen": stp_seen,
+        "matched": matched,
+        "missing_counterpart": missing_counterpart,
+        "skipped_quarantine": skipped,
+    }
+
+
+def find_all_stp_texpage_variants_in_tree(root_folder, process_tmp=True, stop_event=None, progress_callback=None, exclude_folder=None):
+    """Find every STP/ST texpage variant in a tree, not only duplicates.
+
+    This helper powers manual Texture Manager cleanup buttons. It is deliberately
+    separate from the duplicate-only Soul Reaver guard because some non-duplicate
+    STP/ST wall textures may be useful during normal processing, while a manual
+    all-STP quarantine is sometimes needed for controlled testing or cleanup.
+    """
+    root_folder = Path(root_folder)
+    exclude_folder = Path(exclude_folder) if exclude_folder else None
+    candidates = []
+    scanned = stp_seen = skipped = 0
+    seen = set()
+    for path in root_folder.rglob("*"):
+        if stop_event is not None and stop_event.is_set():
+            break
+        if not path.is_file():
+            continue
+        if exclude_folder and is_path_within(path, exclude_folder):
+            skipped += 1
+            continue
+        if any(part in QUARANTINE_ROOT_NAMES for part in path.parts):
+            skipped += 1
+            continue
+        if path.name == QUARANTINE_MANIFEST_NAME:
+            skipped += 1
+            continue
+        if not is_image_like(path, process_tmp):
+            continue
+        scanned += 1
+        counterpart_name = matching_stp_texpage_counterpart_name(path.name)
+        if not counterpart_name:
+            continue
+        key = str(path.resolve()).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        stp_seen += 1
+        candidates.append((
+            path,
+            "stp_texpage_manual_all",
+            "Manual all-STP/ST texpage quarantine"
+        ))
+        if progress_callback and scanned % 5000 == 0:
+            try:
+                progress_callback(scanned, stp_seen)
+            except Exception:
+                pass
+    return {
+        "candidates": candidates,
+        "scanned": scanned,
+        "stp_seen": stp_seen,
+        "skipped_quarantine": skipped,
+    }
+
+
+_DUCKSTATION_TEXTURE_RE = re.compile(
+    r"^(tex(?:upload|page)-[A-Za-z0-9]+)-([0-9A-Fa-f]{16})(?:-([0-9A-Fa-f]{16}))?-(\d+x\d+)-(\d+)-(\d+)-(\d+x\d+)(?:-(P\d+-\d+))?\.(png|jpg|jpeg|webp|bmp|tga|tmp)$",
+    re.IGNORECASE,
+)
+
+
+def is_duckstation_profile(cfg_or_emulator):
+    """Return True only for DuckStation profiles/settings."""
+    if isinstance(cfg_or_emulator, dict):
+        emulator = cfg_or_emulator.get("emulator", "")
+    else:
+        emulator = cfg_or_emulator
+    return str(emulator or "").strip() == "DuckStation"
+
+
+def duckstation_texture_identity_without_data_hash(path_or_name):
+    """Structural DuckStation texture key that ignores the data/index hash.
+
+    FF8 can generate multiple texupload names for the same visible rectangle when
+    ConvertCopiesToWrites is enabled. The first hash changes, while the format,
+    palette hash, upload size, offset, rectangle size and palette range often stay
+    identical. We use that stable structure plus exact image bytes to identify
+    duplicates safely.
+    """
+    name = Path(path_or_name).name
+    m = _DUCKSTATION_TEXTURE_RE.match(name)
+    if not m:
+        return None
+    prefix, _data_hash, palette_hash, upload_size, x, y, sub_size, palette_range, _ext = m.groups()
+    return (
+        prefix.lower(),
+        (palette_hash or "").lower(),
+        upload_size.lower(),
+        str(x), str(y),
+        sub_size.lower(),
+        (palette_range or "").lower(),
+    )
+
+
+def duckstation_exact_visual_signature(path):
+    """Exact RGBA signature for safe duplicate detection."""
+    if not PIL_AVAILABLE:
+        return None
+    try:
+        with Image.open(path) as im:
+            rgba = im.convert("RGBA")
+            digest = hashlib.sha1(rgba.tobytes()).hexdigest()
+            return (rgba.size[0], rgba.size[1], digest)
+    except Exception:
+        return None
+
+
+def find_duckstation_exact_visual_duplicates(dump_folder, cfg=None, stop_event=None, progress_callback=None):
+    """Find exact visual duplicate DuckStation dumps, preserving one canonical file.
+
+    This is conservative: files must share the DuckStation filename structure
+    after removing only the first data/hash field AND have identical decoded RGBA
+    pixels. Different animation frames, blink states, expressions or shifted
+    crops are preserved.
+    """
+    cfg = cfg or {}
+    dump_folder = Path(dump_folder)
+    load_text = str(cfg.get("load_folder") or "").strip()
+    load_folder = Path(load_text) if load_text else None
+    exclude_load_tree = bool(load_folder and is_path_within(load_folder, dump_folder))
+    process_tmp = bool(cfg.get("process_tmp_image_files", True))
+    groups = {}
+    scanned = duckstation_seen = skipped = hashed = duplicate_count = 0
+    candidates = []
+    canonical_map = {}
+
+    for path in dump_folder.rglob("*"):
+        if stop_event is not None and stop_event.is_set():
+            break
+        if not path.is_file():
+            continue
+        if is_inside_alpha_output_folder(path, dump_folder):
+            skipped += 1
+            continue
+        if exclude_load_tree and is_path_within(path, load_folder):
+            skipped += 1
+            continue
+        if any(part in QUARANTINE_ROOT_NAMES for part in path.parts):
+            skipped += 1
+            continue
+        if path.name == QUARANTINE_MANIFEST_NAME:
+            skipped += 1
+            continue
+        if not is_image_like(path, process_tmp):
+            continue
+        scanned += 1
+        identity = duckstation_texture_identity_without_data_hash(path.name)
+        if identity is None:
+            continue
+        duckstation_seen += 1
+        groups.setdefault(identity, []).append(path)
+        if progress_callback and scanned % 5000 == 0:
+            try:
+                progress_callback(scanned, duckstation_seen, duplicate_count)
+            except Exception:
+                pass
+
+    for identity, paths in groups.items():
+        if stop_event is not None and stop_event.is_set():
+            break
+        if len(paths) < 2:
+            continue
+        # Stable choice: earliest modified file wins; name is a deterministic tie-breaker.
+        paths = sorted(paths, key=lambda p: (p.stat().st_mtime if p.exists() else 0, p.name.lower()))
+        seen_by_signature = {}
+        for path in paths:
+            if stop_event is not None and stop_event.is_set():
+                break
+            if not path.exists():
+                continue
+            sig = duckstation_exact_visual_signature(path)
+            if sig is None:
+                continue
+            hashed += 1
+            key = (identity, sig)
+            canonical = seen_by_signature.get(sig)
+            if canonical is None or not Path(canonical).exists():
+                seen_by_signature[sig] = path
+                canonical_map[key] = path
+                continue
+            duplicate_count += 1
+            candidates.append((
+                path,
+                "duckstation_exact_duplicate",
+                f"Exact visual duplicate of {Path(canonical).name}; kept canonical DuckStation upload"
+            ))
+
+    return {
+        "candidates": candidates,
+        "scanned": scanned,
+        "duckstation_seen": duckstation_seen,
+        "groups": len(groups),
+        "hashed": hashed,
+        "duplicates": duplicate_count,
+        "skipped": skipped,
+        "canonical_map": canonical_map,
+    }
+
+def quarantine_files_bulk_preserve_tree(candidates, root_folder, quarantine_session, manifest_flush_every=250):
+    """Move files from any root tree to quarantine while preserving relative paths.
+
+    This is used for replacement/load cleanup where the source tree is not the
+    active dump folder. It uses the same manifest shape as dump quarantine, but
+    records the original folder/path for the replacement output.
+    """
+    root_folder = Path(root_folder)
+    quarantine_session = Path(quarantine_session)
+    quarantine_session.mkdir(parents=True, exist_ok=True)
+    manifest = quarantine_session / QUARANTINE_MANIFEST_NAME
+    data = _load_quarantine_manifest(quarantine_session)
+    entries = data.setdefault("entries", [])
+    moved = []
+    failures = []
+    pending = 0
+    flush_every = max(1, int(manifest_flush_every or 250))
+    for item in candidates:
+        try:
+            path, category, reason = item
+            path = Path(path)
+            if not path.is_file():
+                continue
+            if any(part in QUARANTINE_ROOT_NAMES for part in path.parts):
+                continue
+            try:
+                rel = path.relative_to(root_folder)
+            except Exception:
+                rel = Path(path.name)
+            destination = quarantine_session / rel
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                stem = destination.stem
+                suffix = destination.suffix
+                index = 1
+                while destination.exists():
+                    destination = destination.with_name(f"{stem}_{index}{suffix}")
+                    index += 1
+            shutil.move(str(path), str(destination))
+            try:
+                dest_rel = destination.relative_to(quarantine_session)
+            except Exception:
+                dest_rel = Path(destination.name)
+            entries.append({
+                "destination_relative": dest_rel.as_posix(),
+                "original_relative": rel.as_posix(),
+                "original_dump_folder": str(root_folder),
+                "original_path": str(path),
+                "category": str(category or "quarantined"),
+                "reason": str(reason or ""),
+                "quarantined_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+            moved.append((path, destination, str(category or "quarantined"), str(reason or "")))
+            pending += 1
+            if pending >= flush_every:
+                _save_quarantine_manifest(quarantine_session, data)
+                pending = 0
+        except Exception as exc:
+            try:
+                failures.append((Path(item[0]), str(exc)))
+            except Exception:
+                failures.append((Path("unknown"), str(exc)))
+    if pending or not manifest.exists():
+        _save_quarantine_manifest(quarantine_session, data)
+    return moved, failures
+
+
 def quarantine_metadata_for_path(path, profile_dir, current_dump_folder=None):
     """Return restore metadata for a quarantined image, including legacy sessions."""
     path = Path(path)
@@ -1165,7 +1595,10 @@ def restore_quarantined_dump(path, profile_dir, current_dump_folder, overwrite=F
 
 TERMINAL_STATES = {
     "done", "done_cached", "skip_exists", "cache_hit_restored",
-    "ignored_existing", "exception_skipped", "cutscene_buffer_skipped", "dynamic_efb_skipped"
+    "ignored_existing", "exception_skipped", "cutscene_buffer_skipped",
+    "dynamic_efb_skipped", "sparse_alpha_mask_skipped",
+    "stp_texpage_duplicate_quarantined", "stp_texpage_duplicate_skipped",
+    "duckstation_duplicate_quarantined", "duckstation_duplicate_skipped"
 }
 
 def load_config():
@@ -1995,6 +2428,72 @@ def apply_alpha_image_to_rgba(rgb_png_path, alpha_image_path, invert=False, refe
     out.save(rgb_png_path, format="PNG")
     validate_image_file(rgb_png_path, label="RGBA output")
 
+
+def detect_sparse_alpha_mask_dump(path, cfg):
+    """Detect tiny sparse alpha/mask dumps that should not be AI-remastered.
+
+    Some games, notably Super Mario Strikers in Dolphin, can dump tens of
+    thousands of tiny 80x80 RGBA mask/silhouette frames. They are mostly
+    transparent, carry only a small grayscale alpha shape, and often encode
+    RGB == alpha. Running the RGB/Alpha ComfyUI workflows on these files wastes
+    queue time and can generate invalid texture-pack noise.
+
+    The detector is intentionally narrow: it only accepts small transparent
+    grayscale/alpha-encoded masks with very low visible coverage. Colored UI
+    icons and ordinary sprite textures remain active.
+    """
+    if not PIL_AVAILABLE or not cfg.get("skip_sparse_alpha_masks", True):
+        return False, "sparse alpha mask quarantine disabled"
+    try:
+        with Image.open(path) as source:
+            width, height = source.size
+            if width < 8 or height < 8 or width > 128 or height > 128:
+                return False, f"outside sparse alpha mask size range {width}x{height}"
+            if source.mode not in ("RGBA", "LA") and "transparency" not in source.info:
+                return False, "no alpha channel"
+            rgba = source.convert("RGBA")
+            pixels = list(rgba.getdata())
+            total = max(1, len(pixels))
+            visible = [(r, g, b, a) for r, g, b, a in pixels if a > 8]
+            visible_count = len(visible)
+            if visible_count <= 0:
+                return False, "fully transparent; handled by blank cleanup"
+            visible_ratio = visible_count / total
+            if visible_ratio > 0.12:
+                return False, f"visible coverage {visible_ratio:.1%} is not sparse"
+
+            neutral = 0
+            alpha_encoded = 0
+            bright_or_mask = 0
+            rgba_levels = set()
+            for r, g, b, a in visible:
+                if max(r, g, b) - min(r, g, b) <= 3:
+                    neutral += 1
+                if abs(r - a) <= 3 and abs(g - a) <= 3 and abs(b - a) <= 3:
+                    alpha_encoded += 1
+                if max(r, g, b) >= 96 or a >= 96:
+                    bright_or_mask += 1
+                rgba_levels.add((r >> 4, g >> 4, b >> 4, a >> 4))
+                if len(rgba_levels) > 24:
+                    return False, "too many RGBA levels for a simple mask"
+
+            neutral_ratio = neutral / max(1, visible_count)
+            encoded_ratio = alpha_encoded / max(1, visible_count)
+            mask_signal_ratio = bright_or_mask / max(1, visible_count)
+            if neutral_ratio >= 0.98 and encoded_ratio >= 0.92 and mask_signal_ratio >= 0.50:
+                return True, (
+                    f"sparse alpha/mask dump {width}x{height}; "
+                    f"visible={visible_ratio:.1%}, levels={len(rgba_levels)}, "
+                    f"alpha-encoded={encoded_ratio:.1%}"
+                )
+            return False, (
+                f"not sparse alpha mask (neutral={neutral_ratio:.1%}, "
+                f"alpha-encoded={encoded_ratio:.1%}, visible={visible_ratio:.1%})"
+            )
+    except Exception as exc:
+        return False, f"sparse alpha mask analysis failed: {exc}"
+
+
 def has_alpha(path):
     if not PIL_AVAILABLE:
         return False
@@ -2560,6 +3059,7 @@ class Worker:
         self._auto_quarantine_classified = set()
         self._live_buffer_candidates = {}
         self._live_buffer_last_candidate_at = 0.0
+        self._duckstation_duplicate_seen = {}
 
     def log(self, msg):
         self.log_q.put(msg)
@@ -2649,6 +3149,12 @@ class Worker:
     def process_one(self, path):
         dump_folder = Path(self.cfg["dump_folder"])
         load_folder = Path(self.cfg["load_folder"])
+        duckstation_guard_status = self.duckstation_duplicate_guard_before_process(path)
+        if duckstation_guard_status:
+            return duckstation_guard_status
+        stp_guard_status = self.quarantine_matching_stp_texpage_before_process(path)
+        if stp_guard_status:
+            return stp_guard_status
         if self.cfg.get("emulator") == "Azahar / Citra" and self.cfg.get("auto_sync_azahar_pack_json", True):
             sync_azahar_pack_json(dump_folder, load_folder, self.log)
 
@@ -2660,6 +3166,24 @@ class Worker:
         self.stats["current_texture_stage"] = "Preparing"
         self.stats["current_texture_started_at"] = time.time()
 
+        if str(self.cfg.get("emulator") or "").strip() == "Dolphin" and self.cfg.get("skip_sparse_alpha_masks", True):
+            is_sparse_mask, sparse_reason = detect_sparse_alpha_mask_dump(path, self.cfg)
+            if is_sparse_mask:
+                if self.cfg.get("auto_quarantine_sparse_alpha_masks_on_start", True):
+                    try:
+                        moved, failures = self._bulk_quarantine_sparse_alpha_masks(
+                            [(path, "sparse_alpha_mask", sparse_reason)], "sparse-alpha-live"
+                        )
+                        if moved:
+                            return "sparse_alpha_mask_quarantined"
+                        if failures:
+                            self.log(f"Sparse alpha/mask dump kept after quarantine failure: {path.name}")
+                    except Exception as exc:
+                        self.log(f"Sparse alpha/mask quarantine failed; skipping in place: {path.name}: {exc}")
+                self.stats["sparse_alpha_masks_skipped"] = self.stats.get("sparse_alpha_masks_skipped", 0) + 1
+                self.log(f"Sparse alpha/mask dump skipped: {path.name} ({sparse_reason})")
+                return "sparse_alpha_mask_skipped"
+
         if alpha:
             self.log(f"Alpha detected: {path.name}")
 
@@ -2667,14 +3191,14 @@ class Worker:
             self.stats["exceptions_skipped"] = self.stats.get("exceptions_skipped", 0) + 1
             return "exception_skipped"
 
-        if self.cfg.get("skip_dynamic_efb_postprocess", True):
+        if str(self.cfg.get("emulator") or "").strip() in AUTO_BUFFER_QUARANTINE_EMULATORS and self.cfg.get("skip_dynamic_efb_postprocess", True):
             is_dynamic, reason = detect_dynamic_efb_postprocess_dump(path, self.cfg)
             if is_dynamic:
                 self.stats["cutscene_buffers_skipped"] = self.stats.get("cutscene_buffers_skipped", 0) + 1
                 self.log(f"Dynamic EFB/post-processing dump skipped and KEPT: {path.name} ({reason})")
                 return "dynamic_efb_skipped"
 
-        if self.cfg.get("skip_cutscene_buffers", True):
+        if str(self.cfg.get("emulator") or "").strip() in AUTO_BUFFER_QUARANTINE_EMULATORS and self.cfg.get("skip_cutscene_buffers", True):
             is_buffer, reason = detect_cutscene_buffer(path, self.cfg, include_dynamic=False)
             if is_buffer:
                 self.stats["cutscene_buffers_skipped"] = self.stats.get("cutscene_buffers_skipped", 0) + 1
@@ -2875,7 +3399,8 @@ class Worker:
                     continue
                 dynamic, _ = detect_dynamic_efb_postprocess_dump(p, self.cfg)
                 static_buffer, _ = detect_cutscene_buffer(p, self.cfg, include_dynamic=False)
-                if dynamic or static_buffer or is_exception_texture(p):
+                sparse_mask, _ = detect_sparse_alpha_mask_dump(p, self.cfg)
+                if dynamic or static_buffer or sparse_mask or is_exception_texture(p):
                     continue
             out_path = routed_output_path_for_input(p, dump_folder, load_folder, self.cfg)
             if not out_path.exists():
@@ -2957,6 +3482,8 @@ class Worker:
 
     def auto_quarantine_efb_cutscenes_on_start(self):
         """Scan once before indexing and quarantine strict buffers without prompts."""
+        if str(self.cfg.get("emulator") or "").strip() not in AUTO_BUFFER_QUARANTINE_EMULATORS:
+            return
         if not self.cfg.get("auto_quarantine_efb_cutscenes", False):
             return
         if not PIL_AVAILABLE:
@@ -3016,7 +3543,324 @@ class Worker:
             f"analysis-failed={failed_analysis}, move-failed={len(failures)}, elapsed={elapsed:.1f}s"
         )
 
+    def _bulk_quarantine_sparse_alpha_masks(self, candidates, session_prefix="sparse-alpha"):
+        """Move sparse alpha/mask dumps in one reversible bulk operation."""
+        candidates = [item for item in candidates if Path(item[0]).is_file()]
+        if not candidates:
+            return [], []
+        dump_folder = Path(self.cfg["dump_folder"])
+        session = (
+            self.profile_dir / "_cleanup_quarantine" /
+            f"{session_prefix}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        )
+        moved, failures = quarantine_dumps_bulk(
+            candidates, dump_folder, session, manifest_flush_every=250
+        )
+        moved_sources = [source for source, _destination, _category, _reason in moved]
+        moved_keys = {str(path) for path in moved_sources}
+        if moved_keys:
+            self._remove_paths_from_queues(moved_sources)
+            processed_changed = False
+            for key in moved_keys:
+                if key in self.processed:
+                    self.processed.discard(key)
+                    processed_changed = True
+                self.known_files.discard(key)
+                self._auto_quarantine_classified.discard(key)
+            if processed_changed:
+                try:
+                    self.processed_log.write_text(
+                        "\n".join(sorted(self.processed)) + ("\n" if self.processed else ""),
+                        encoding="utf-8"
+                    )
+                except Exception as exc:
+                    self.log(f"Sparse alpha quarantine could not update processed log: {exc}")
+
+        self.stats["sparse_alpha_masks_quarantined"] = self.stats.get("sparse_alpha_masks_quarantined", 0) + len(moved)
+        self.stats["sparse_alpha_masks_quarantine_failed"] = self.stats.get("sparse_alpha_masks_quarantine_failed", 0) + len(failures)
+        self.log(
+            f"Sparse alpha/mask quarantine: moved={len(moved)}, failed={len(failures)}"
+        )
+        if moved:
+            self.log(f"Sparse alpha/mask quarantine session: {session}")
+        for path, error in failures[:10]:
+            self.log(f"Sparse alpha/mask quarantine failed: {path.name}: {error}")
+        return moved, failures
+
+    def _bulk_quarantine_duckstation_duplicates(self, candidates, session_prefix="duckstation-duplicates"):
+        """Move exact visual DuckStation duplicate dumps in one reversible bulk operation."""
+        candidates = [item for item in candidates if Path(item[0]).is_file()]
+        if not candidates:
+            return [], []
+        dump_folder = Path(self.cfg["dump_folder"])
+        session = (
+            self.profile_dir / "_cleanup_quarantine" /
+            f"{session_prefix}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        )
+        moved, failures = quarantine_dumps_bulk(
+            candidates, dump_folder, session, manifest_flush_every=500
+        )
+        for source, _destination, _category, _reason in moved:
+            self.mark_processed(source)
+            self.known_files.discard(str(source))
+            self.failed_this_session.discard(str(source))
+        if moved:
+            self._remove_paths_from_queues([row[0] for row in moved])
+        self.stats["duckstation_duplicates_quarantined"] = self.stats.get("duckstation_duplicates_quarantined", 0) + len(moved)
+        self.stats["duckstation_duplicates_failed"] = self.stats.get("duckstation_duplicates_failed", 0) + len(failures)
+        self.log(
+            f"DuckStation duplicate quarantine: moved={len(moved)}, failed={len(failures)}"
+        )
+        if moved:
+            self.log(f"DuckStation duplicate quarantine session: {session}")
+        for path, error in failures[:10]:
+            self.log(f"DuckStation duplicate quarantine failed: {path.name}: {error}")
+        return moved, failures
+
+    def auto_quarantine_duckstation_duplicates_on_start(self):
+        """Preflight exact duplicate cleanup for DuckStation before the Comfy queue is built."""
+        if not is_duckstation_profile(self.cfg):
+            return
+        if not self.cfg.get("duckstation_duplicate_cleanup_on_start", True):
+            return
+        if not PIL_AVAILABLE:
+            self.log("DuckStation duplicate preflight skipped: Pillow is unavailable.")
+            return
+        dump_folder = Path(self.cfg["dump_folder"])
+        started = time.time()
+        self.stats["current_texture_stage"] = "Scanning DuckStation duplicate dumps"
+        self.log(f"DuckStation duplicate preflight scan: {dump_folder}")
+
+        def progress(scanned, seen, duplicates):
+            self.log(f"DuckStation duplicate scan progress: scanned={scanned}, DuckStation={seen}, duplicates={duplicates}")
+
+        result = find_duckstation_exact_visual_duplicates(
+            dump_folder, self.cfg, stop_event=self.stop_event, progress_callback=progress
+        )
+        # Seed the live map with canonicals that survived startup cleanup.
+        self._duckstation_duplicate_seen.update(result.get("canonical_map") or {})
+        candidates = result.get("candidates", [])
+        moved, failures = self._bulk_quarantine_duckstation_duplicates(candidates, "duckstation-startup")
+        elapsed = time.time() - started
+        self.stats["duckstation_duplicates_scanned"] = result.get("scanned", 0)
+        self.stats["duckstation_duplicates_detected"] = len(candidates)
+        self.log(
+            "DuckStation duplicate preflight complete: "
+            f"scanned={result.get('scanned', 0)}, DuckStation textures={result.get('duckstation_seen', 0)}, "
+            f"groups={result.get('groups', 0)}, exact-duplicates={len(candidates)}, "
+            f"moved={len(moved)}, failed={len(failures)}, elapsed={elapsed:.1f}s"
+        )
+
+    def duckstation_duplicate_guard_before_process(self, path):
+        """Live per-file duplicate guard before a DuckStation texture reaches ComfyUI."""
+        if not is_duckstation_profile(self.cfg):
+            return None
+        if not self.cfg.get("duckstation_live_duplicate_guard", True):
+            return None
+        if not PIL_AVAILABLE:
+            return None
+        path = Path(path)
+        identity = duckstation_texture_identity_without_data_hash(path.name)
+        if identity is None:
+            return None
+        sig = duckstation_exact_visual_signature(path)
+        if sig is None:
+            return None
+        key = (identity, sig)
+        canonical = self._duckstation_duplicate_seen.get(key)
+        if canonical is not None:
+            canonical = Path(canonical)
+            if canonical != path and canonical.exists():
+                reason = f"Live exact visual duplicate of {canonical.name}; kept canonical DuckStation upload"
+                moved, failures = self._bulk_quarantine_duckstation_duplicates(
+                    [(path, "duckstation_exact_duplicate", reason)], "duckstation-live"
+                )
+                if moved:
+                    self.log(f"DuckStation live duplicate guard quarantined before ComfyUI: {path.name} -> kept {canonical.name}")
+                    return "duckstation_duplicate_quarantined"
+                if failures:
+                    self.log(f"DuckStation live duplicate guard failed for {path.name}: {failures[0][1]}")
+                    return "duckstation_duplicate_skipped"
+        self._duckstation_duplicate_seen[key] = path
+        return None
+
+    def _bulk_quarantine_stp_texpage_duplicates(self, candidates, session_prefix="stp-texpage"):
+        """Move matching STP/ST texpage duplicates in one reversible bulk operation."""
+        candidates = [item for item in candidates if Path(item[0]).is_file()]
+        if not candidates:
+            return [], []
+        dump_folder = Path(self.cfg["dump_folder"])
+        session = (
+            self.profile_dir / "_cleanup_quarantine" /
+            f"{session_prefix}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        )
+        moved, failures = quarantine_dumps_bulk(
+            candidates, dump_folder, session, manifest_flush_every=500
+        )
+        moved_sources = [source for source, _destination, _category, _reason in moved]
+        moved_keys = {str(path) for path in moved_sources}
+        if moved_keys:
+            self._remove_paths_from_queues(moved_sources)
+            processed_changed = False
+            for key in moved_keys:
+                if key in self.processed:
+                    self.processed.discard(key)
+                    processed_changed = True
+                self.known_files.discard(key)
+                self._auto_quarantine_classified.discard(key)
+            if processed_changed:
+                try:
+                    self.processed_log.write_text(
+                        "\n".join(sorted(self.processed)) + ("\n" if self.processed else ""),
+                        encoding="utf-8"
+                    )
+                except Exception as exc:
+                    self.log(f"STP texpage quarantine could not update processed log: {exc}")
+
+        self.stats["stp_texpage_duplicates_quarantined"] = self.stats.get("stp_texpage_duplicates_quarantined", 0) + len(moved)
+        self.stats["stp_texpage_duplicates_failed"] = self.stats.get("stp_texpage_duplicates_failed", 0) + len(failures)
+        self.log(
+            f"STP texpage duplicate quarantine: moved={len(moved)}, failed={len(failures)}"
+        )
+        if moved:
+            self.log(f"STP texpage duplicate quarantine session: {session}")
+        for path, error in failures[:10]:
+            self.log(f"STP texpage quarantine failed: {path.name}: {error}")
+        return moved, failures
+
+    def quarantine_matching_stp_texpage_before_process(self, path):
+        """Final per-file guard before an STP/ST texpage can be processed.
+
+        This deliberately does NOT quarantine all STP files. It only moves the
+        STP/ST texture when the active dump folder currently contains the exact
+        matching normal P/T texture in the same directory. Non-duplicated STP/ST
+        files are allowed through because some Soul Reaver wall textures need
+        them.
+        """
+        if not is_duckstation_profile(self.cfg):
+            return None
+        if not self.cfg.get("duckstation_duplicate_cleanup_on_start", True):
+            return None
+        if not self.cfg.get("guard_matching_stp_texpages_before_process", self.cfg.get("auto_quarantine_matching_stp_texpages_on_start", True)):
+            return None
+        counterpart_name = matching_stp_texpage_counterpart_name(Path(path).name)
+        if not counterpart_name:
+            return None
+        counterpart = Path(path).with_name(counterpart_name)
+        if not counterpart.is_file():
+            return None
+        reason = f"Matching normal texpage exists before processing: {counterpart.name}"
+        moved, failures = self._bulk_quarantine_stp_texpage_duplicates(
+            [(Path(path), "stp_texpage_duplicate", reason)], "stp-texpage-before-process"
+        )
+        if moved:
+            self.log(f"STP duplicate guard quarantined before processing: {Path(path).name} -> kept {counterpart.name}")
+            return "stp_texpage_duplicate_quarantined"
+        if failures:
+            self.stats["stp_texpage_duplicates_failed"] = self.stats.get("stp_texpage_duplicates_failed", 0) + len(failures)
+            self.log(f"STP duplicate guard skipped after quarantine failure: {Path(path).name} ({failures[0][1]})")
+            return "stp_texpage_duplicate_skipped"
+        return None
+
+    def auto_quarantine_matching_stp_texpages_on_start(self):
+        """Preflight scan for Soul Reaver-style STP/P texpage alpha duplicates."""
+        if not is_duckstation_profile(self.cfg):
+            return
+        if not self.cfg.get("duckstation_duplicate_cleanup_on_start", True):
+            return
+        if not self.cfg.get("auto_quarantine_matching_stp_texpages_on_start", True):
+            return
+        dump_folder = Path(self.cfg["dump_folder"])
+        started = time.time()
+        self.stats["current_texture_stage"] = "Scanning STP texpage duplicates"
+        self.log(f"STP texpage duplicate preflight scan: {dump_folder}")
+
+        def progress(scanned, stp_seen, matched):
+            self.log(
+                f"STP texpage scan progress: scanned={scanned}, STP/ST seen={stp_seen}, matched={matched}"
+            )
+
+        result = find_matching_stp_texpage_duplicates(
+            dump_folder, self.cfg, stop_event=self.stop_event, progress_callback=progress
+        )
+        candidates = result.get("candidates", [])
+        moved, failures = self._bulk_quarantine_stp_texpage_duplicates(candidates, "stp-texpage-startup")
+        elapsed = time.time() - started
+        self.stats["stp_texpage_duplicates_scanned"] = result.get("scanned", 0)
+        self.stats["stp_texpage_duplicates_detected"] = len(candidates)
+        self.stats["stp_texpage_duplicates_missing_counterpart"] = result.get("missing_counterpart", 0)
+        self.log(
+            "STP texpage duplicate preflight complete: "
+            f"scanned={result.get('scanned', 0)}, STP/ST seen={result.get('stp_seen', 0)}, "
+            f"matched={len(candidates)}, moved={len(moved)}, "
+            f"no-matching-normal={result.get('missing_counterpart', 0)}, "
+            f"move-failed={len(failures)}, elapsed={elapsed:.1f}s"
+        )
+
+    def auto_quarantine_sparse_alpha_masks_on_start(self):
+        """Scan the whole dump folder before indexing and move sparse alpha/mask dumps out of the active tree."""
+        if str(self.cfg.get("emulator") or "").strip() != "Dolphin":
+            return
+        if not self.cfg.get("skip_sparse_alpha_masks", True):
+            return
+        if not self.cfg.get("auto_quarantine_sparse_alpha_masks_on_start", True):
+            return
+        if not PIL_AVAILABLE:
+            self.log("Sparse alpha/mask quarantine skipped: Pillow is unavailable.")
+            return
+
+        dump_folder = Path(self.cfg["dump_folder"])
+        load_text = str(self.cfg.get("load_folder") or "").strip()
+        load_folder = Path(load_text) if load_text else None
+        exclude_load_tree = bool(load_folder and is_path_within(load_folder, dump_folder))
+        process_tmp = bool(self.cfg.get("process_tmp_image_files", True))
+        candidates = []
+        scanned = recent_skipped = failed_analysis = 0
+        started = time.time()
+        self.stats["current_texture_stage"] = "Scanning sparse alpha/mask dumps"
+        self.log(f"Sparse alpha/mask startup scan: {dump_folder}")
+
+        files = [
+            path for path in dump_folder.rglob("*")
+            if path.is_file()
+            and not is_inside_alpha_output_folder(path, dump_folder)
+            and not (exclude_load_tree and is_path_within(path, load_folder))
+            and is_image_like(path, process_tmp)
+        ]
+        for path in files:
+            if self.stop_event.is_set():
+                break
+            scanned += 1
+            try:
+                if time.time() - path.stat().st_mtime < 1.0:
+                    recent_skipped += 1
+                    continue
+                is_sparse, reason = detect_sparse_alpha_mask_dump(path, self.cfg)
+                if is_sparse:
+                    candidates.append((path, "sparse_alpha_mask", reason))
+            except Exception:
+                failed_analysis += 1
+            if scanned % 1000 == 0:
+                self.log(
+                    f"Sparse alpha/mask scan progress: scanned={scanned}, candidates={len(candidates)}"
+                )
+
+        moved, failures = self._bulk_quarantine_sparse_alpha_masks(candidates, "sparse-alpha-startup")
+        elapsed = time.time() - started
+        self.stats["sparse_alpha_masks_scanned"] = scanned
+        self.stats["sparse_alpha_masks_detected"] = len(candidates)
+        self.stats["sparse_alpha_masks_recent_skipped"] = recent_skipped
+        self.log(
+            "Sparse alpha/mask startup scan complete: "
+            f"scanned={scanned}, detected={len(candidates)}, moved={len(moved)}, "
+            f"recent-skipped={recent_skipped}, analysis-failed={failed_analysis}, "
+            f"move-failed={len(failures)}, elapsed={elapsed:.1f}s"
+        )
+
     def _flush_live_buffer_candidates(self, force=False):
+        if str(self.cfg.get("emulator") or "").strip() not in AUTO_BUFFER_QUARANTINE_EMULATORS:
+            self._live_buffer_candidates.clear()
+            return
         if not self.cfg.get("auto_quarantine_efb_cutscenes", False):
             self._live_buffer_candidates.clear()
             return
@@ -3059,6 +3903,8 @@ class Worker:
 
     def _filter_and_stage_live_buffer_candidates(self, files):
         """Classify unqueued files; hold strict candidates until a bulk flush."""
+        if str(self.cfg.get("emulator") or "").strip() not in AUTO_BUFFER_QUARANTINE_EMULATORS:
+            return [path for path in files if path.is_file()]
         if not self.cfg.get("auto_quarantine_efb_cutscenes", False) or not PIL_AVAILABLE:
             return [path for path in files if path.is_file()]
 
@@ -3103,6 +3949,8 @@ class Worker:
         Dynamic EFB/post-processing candidates are deliberately excluded and remain
         untouched. Files modified in the last two seconds are also left alone.
         """
+        if str(self.cfg.get("emulator") or "").strip() not in AUTO_BUFFER_QUARANTINE_EMULATORS:
+            return
         if not self.cfg.get("auto_scan_delete_cutscene_buffers_on_start", False):
             return
         if not PIL_AVAILABLE:
@@ -3483,6 +4331,9 @@ class Worker:
 
     def run(self):
         self.log(f"Watching: {Path(self.cfg['dump_folder'])}")
+        self.auto_quarantine_duckstation_duplicates_on_start()
+        self.auto_quarantine_matching_stp_texpages_on_start()
+        self.auto_quarantine_sparse_alpha_masks_on_start()
         self.auto_quarantine_efb_cutscenes_on_start()
         self.auto_cleanup_cutscene_dumps_on_start()
         if self.stop_event.is_set():
@@ -4098,7 +4949,7 @@ class App(tk.Tk):
         self.stats = {
             "processed":0, "cache_hits":0, "comfy_jobs":0, "queue_len":0,
             "high_queue_len":0, "low_queue_len":0, "peak_vram_mb":0,
-            "status":"STOPPED", "comfy_online": False, "comfy_running": None, "comfy_pending": None, "comfy_error": "", "exceptions_skipped": 0, "cutscene_buffers_skipped": 0, "cutscene_buffers_deleted": 0, "startup_cleanup_deleted": 0
+            "status":"STOPPED", "comfy_online": False, "comfy_running": None, "comfy_pending": None, "comfy_error": "", "exceptions_skipped": 0, "cutscene_buffers_skipped": 0, "cutscene_buffers_deleted": 0, "startup_cleanup_deleted": 0, "stp_texpage_duplicates_quarantined": 0, "stp_texpage_duplicates_failed": 0
         }
         self.build()
         if MIGRATED_ITEMS:
@@ -4227,6 +5078,8 @@ class App(tk.Tk):
         self.dynamic_efb_filter_var = tk.BooleanVar(value=bool(self.cfg.get("skip_dynamic_efb_postprocess", True)))
         self.delete_cutscene_var = tk.BooleanVar(value=bool(self.cfg.get("delete_skipped_cutscene_buffers", False)))
         self.auto_cleanup_cutscene_var = tk.BooleanVar(value=bool(self.cfg.get("auto_scan_delete_cutscene_buffers_on_start", False)))
+        self.skip_sparse_alpha_var = tk.BooleanVar(value=bool(self.cfg.get("skip_sparse_alpha_masks", True)))
+        self.auto_quarantine_sparse_alpha_var = tk.BooleanVar(value=bool(self.cfg.get("auto_quarantine_sparse_alpha_masks_on_start", True)))
         tk.Checkbutton(
             filter_opts,
             text="Skip cutscene buffers and empty/black dumps",
@@ -4246,6 +5099,11 @@ class App(tk.Tk):
             filter_opts,
             text="Safe startup blank-dump quarantine",
             variable=self.auto_cleanup_cutscene_var
+        ).pack(side="left", padx=(20,0))
+        tk.Checkbutton(
+            filter_opts,
+            text="Quarantine sparse alpha masks on start",
+            variable=self.auto_quarantine_sparse_alpha_var
         ).pack(side="left", padx=(20,0))
 
         status_opts = tk.Frame(top); status_opts.pack(fill="x", padx=10, pady=5)
@@ -4720,6 +5578,12 @@ class App(tk.Tk):
         cfg["prioritize_new_dumps"] = bool(self.priority_var.get())
         cfg["skip_cutscene_buffers"] = bool(self.cutscene_filter_var.get())
         cfg["skip_dynamic_efb_postprocess"] = bool(self.dynamic_efb_filter_var.get())
+        cfg["skip_sparse_alpha_masks"] = bool(self.skip_sparse_alpha_var.get() if hasattr(self, "skip_sparse_alpha_var") else True)
+        cfg["auto_quarantine_sparse_alpha_masks_on_start"] = bool(self.auto_quarantine_sparse_alpha_var.get() if hasattr(self, "auto_quarantine_sparse_alpha_var") else True)
+        cfg["duckstation_duplicate_cleanup_on_start"] = bool(self.duckstation_duplicate_cleanup_var.get() if hasattr(self, "duckstation_duplicate_cleanup_var") else True)
+        cfg["duckstation_live_duplicate_guard"] = bool(self.duckstation_live_duplicate_guard_var.get() if hasattr(self, "duckstation_live_duplicate_guard_var") else True)
+        cfg["auto_quarantine_matching_stp_texpages_on_start"] = bool(cfg.get("duckstation_duplicate_cleanup_on_start", True))
+        cfg["guard_matching_stp_texpages_before_process"] = bool(cfg.get("duckstation_duplicate_cleanup_on_start", True))
         cfg["delete_skipped_cutscene_buffers"] = bool(self.delete_cutscene_var.get())
         cfg["auto_scan_delete_cutscene_buffers_on_start"] = bool(self.auto_cleanup_cutscene_var.get())
         cfg["auto_quarantine_efb_cutscenes"] = bool(
@@ -6746,7 +7610,9 @@ PROFILE_SETTING_KEYS = [
     "pause_when_comfy_offline", "auto_start_comfy_when_watching", "auto_check_missing_load",
     "enable_separate_alpha_workflow", "alpha_workflow_invert_output",
     "enable_vram_protection", "max_vram_gb", "vram_resume_margin_gb",
-    "skip_cutscene_buffers", "skip_dynamic_efb_postprocess", "delete_skipped_cutscene_buffers",
+    "skip_cutscene_buffers", "skip_dynamic_efb_postprocess", "skip_sparse_alpha_masks",
+    "auto_quarantine_sparse_alpha_masks_on_start", "auto_quarantine_matching_stp_texpages_on_start", "guard_matching_stp_texpages_before_process",
+    "delete_skipped_cutscene_buffers",
     "auto_scan_delete_cutscene_buffers_on_start",
     "auto_quarantine_efb_cutscenes", "auto_quarantine_live_threshold",
     "auto_quarantine_live_idle_seconds",
@@ -6808,7 +7674,7 @@ def save_batch_queue_state(queue, shutdown_when_finished=False, last_status="idl
     temp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     temp.replace(BATCH_QUEUE_PATH)
 
-BUILD_DEFAULTS_VERSION = "11.10.6-dump-path-discovery-v1"
+BUILD_DEFAULTS_VERSION = "11.10.31-duckstation-duplicates-emulator-scope-v1"
 
 _MANAGED_RGB_WORKFLOW_FILENAMES = {
     "faithful_rgb_workflow_api.json",
@@ -6936,6 +7802,23 @@ def apply_current_build_defaults(profile_data):
         if settings.get("skip_dynamic_efb_postprocess") is not True:
             settings["skip_dynamic_efb_postprocess"] = True
             changed = True
+        if settings.get("skip_sparse_alpha_masks") is not True:
+            settings["skip_sparse_alpha_masks"] = True
+            changed = True
+        if settings.get("auto_quarantine_sparse_alpha_masks_on_start") is not True:
+            settings["auto_quarantine_sparse_alpha_masks_on_start"] = True
+            changed = True
+        if settings.get("auto_quarantine_matching_stp_texpages_on_start") is not True:
+            settings["auto_quarantine_matching_stp_texpages_on_start"] = True
+        if settings.get("guard_matching_stp_texpages_before_process") is not True:
+            settings["guard_matching_stp_texpages_before_process"] = True
+            changed = True
+        if "duckstation_duplicate_cleanup_on_start" not in settings:
+            settings["duckstation_duplicate_cleanup_on_start"] = (str(record.get("emulator") or "").strip() == "DuckStation")
+            changed = True
+        if "duckstation_live_duplicate_guard" not in settings:
+            settings["duckstation_live_duplicate_guard"] = (str(record.get("emulator") or "").strip() == "DuckStation")
+            changed = True
         if settings.get("delete_skipped_cutscene_buffers") is not False:
             settings["delete_skipped_cutscene_buffers"] = False
             changed = True
@@ -6975,6 +7858,25 @@ def apply_current_build_defaults(profile_data):
         cfg_changed = True
     if cfg.get("skip_dynamic_efb_postprocess") is not True:
         cfg["skip_dynamic_efb_postprocess"] = True
+        cfg_changed = True
+    if cfg.get("skip_sparse_alpha_masks") is not True:
+        cfg["skip_sparse_alpha_masks"] = True
+        cfg_changed = True
+    if cfg.get("auto_quarantine_sparse_alpha_masks_on_start") is not True:
+        cfg["auto_quarantine_sparse_alpha_masks_on_start"] = True
+        cfg_changed = True
+    if cfg.get("auto_quarantine_matching_stp_texpages_on_start") is not True:
+        cfg["auto_quarantine_matching_stp_texpages_on_start"] = True
+    if cfg.get("guard_matching_stp_texpages_before_process") is not True:
+        cfg["guard_matching_stp_texpages_before_process"] = True
+        cfg_changed = True
+    if "duckstation_duplicate_cleanup_on_start" not in cfg:
+        active_emulator = str(active_record.get("emulator") or "").strip() if isinstance(active_record, dict) else ""
+        cfg["duckstation_duplicate_cleanup_on_start"] = active_emulator == "DuckStation"
+        cfg_changed = True
+    if "duckstation_live_duplicate_guard" not in cfg:
+        active_emulator = str(active_record.get("emulator") or "").strip() if isinstance(active_record, dict) else ""
+        cfg["duckstation_live_duplicate_guard"] = active_emulator == "DuckStation"
         cfg_changed = True
     if cfg.get("delete_skipped_cutscene_buffers") is not False:
         cfg["delete_skipped_cutscene_buffers"] = False
@@ -7156,6 +8058,7 @@ class V11App(App):
             "Skip cutscene buffers and empty/black dumps": "Skips likely cutscene frame buffers, fully transparent textures, and nearly black empty dumps.",
             "Quarantine skipped cutscene / blank dumps": "Moves automatically skipped cutscene or blank dumps into the current profile quarantine instead of deleting them. Dynamic EFB stays in place during live watching; use the manual EFB + Cutscene quarantine button when desired.",
             "Safe startup blank-dump quarantine": "Before the first queue is built, moves only fully transparent or near-solid-black dumps into a reversible profile quarantine. Dynamic EFB and grayscale textures are excluded.",
+            "Quarantine sparse alpha masks": "Before the first queue is built, scans the active dump folder and moves tiny transparent grayscale alpha/mask dumps into reversible profile quarantine.",
             "Enable ComfyUI status monitoring": "Periodically checks whether ComfyUI is online and reports its queue status.",
             "Pause processing when ComfyUI is offline": "Keeps textures queued instead of failing them while ComfyUI is unavailable.",
             "If ComfyUI is offline, start it automatically": "When Start Watching is pressed, checks ComfyUI and launches the configured start file only if the server is offline.",
@@ -7880,22 +8783,47 @@ class V11App(App):
         )
 
         self._dashboard_setting_heading(quick_inner, "Dump protection")
-        self._dashboard_setting_row(
+        self.dashboard_cinematic_rows = []
+        self.dashboard_sparse_alpha_rows = []
+        self.dashboard_duckstation_rows = []
+        self.dashboard_auto_efb_row = self._dashboard_setting_row(
             quick_inner, "Auto-quarantine EFB + cutscenes", self.auto_quarantine_buffers_var,
             tooltip=(
-                "Runs one strict bulk scan before Batch Queue or Start Watching, then groups newly "
-                "detected buffers during live watching instead of moving them one by one."
+                "Dolphin/PPSSPP only. Runs one strict bulk scan before Batch Queue or Start Watching, "
+                "then groups newly detected buffers during live watching instead of moving them one by one."
             )
         )
-        self._dashboard_setting_row(
+        self.dashboard_cinematic_rows.append(self.dashboard_auto_efb_row)
+        self.dashboard_sparse_alpha_row = self._dashboard_setting_row(
+            quick_inner, "Quarantine sparse alpha masks", self.auto_quarantine_sparse_alpha_var,
+            tooltip=(
+                "Dolphin only. Scans the full dump folder before Start Watching or each Batch profile and moves tiny sparse alpha/mask dumps into reversible quarantine."
+            )
+        )
+        self.dashboard_sparse_alpha_rows.append(self.dashboard_sparse_alpha_row)
+        self.dashboard_duckstation_duplicate_row = self._dashboard_setting_row(
+            quick_inner, "DuckStation duplicate cleanup", self.duckstation_duplicate_cleanup_var,
+            tooltip=(
+                "DuckStation only. Before remastering, quarantines exact visual duplicate texupload/texpage dumps so repeated FF8-style uploads do not go to ComfyUI."
+            )
+        )
+        self.dashboard_duckstation_rows.append(self.dashboard_duckstation_duplicate_row)
+        self.dashboard_duckstation_live_row = self._dashboard_setting_row(
+            quick_inner, "DuckStation live duplicate guard", self.duckstation_live_duplicate_guard_var,
+            tooltip=(
+                "DuckStation only. While watching, checks new dumps before enqueue/processing and quarantines exact visual duplicates of canonical textures."
+            )
+        )
+        self.dashboard_duckstation_rows.append(self.dashboard_duckstation_live_row)
+        self.dashboard_dynamic_efb_row = self._dashboard_setting_row(
             quick_inner, "Skip remaining dynamic EFB", self.dynamic_efb_filter_var,
             tooltip=(
-                "Keeps confirmed dynamic EFB and post-processing buffers out of texture processing, "
-                "including any buffers waiting for the next bulk quarantine move."
+                "Dolphin/PPSSPP only. Keeps confirmed dynamic EFB and post-processing buffers out of texture processing."
             )
         )
+        self.dashboard_cinematic_rows.append(self.dashboard_dynamic_efb_row)
 
-        self._dashboard_settings_menu(
+        self.dashboard_advanced_cleanup_button = self._dashboard_settings_menu(
             quick_inner, "Advanced cleanup",
             [
                 (
@@ -7910,6 +8838,7 @@ class V11App(App):
                 ),
             ]
         )
+        self.dashboard_cinematic_rows.append(self.dashboard_advanced_cleanup_button)
 
         self._dashboard_setting_heading(quick_inner, "ComfyUI")
         self._dashboard_setting_row(
@@ -9911,6 +10840,56 @@ class V11App(App):
             except Exception:
                 pass
 
+        is_duckstation = emulator == "DuckStation"
+        show_cinematic = emulator in AUTO_BUFFER_QUARANTINE_EMULATORS
+        show_sparse_alpha = emulator == "Dolphin"
+
+        def _toggle_pack(widget, show):
+            if widget is None:
+                return
+            try:
+                if show:
+                    if not widget.winfo_manager():
+                        widget.pack(fill="x", padx=10, pady=2)
+                else:
+                    widget.pack_forget()
+            except Exception:
+                pass
+
+        for widget in getattr(self, "dashboard_cinematic_rows", []):
+            _toggle_pack(widget, show_cinematic)
+        for widget in getattr(self, "dashboard_sparse_alpha_rows", []):
+            _toggle_pack(widget, show_sparse_alpha)
+        for widget in getattr(self, "dashboard_duckstation_rows", []):
+            _toggle_pack(widget, is_duckstation)
+
+        def _toggle_existing_pack(widget, show):
+            if widget is None:
+                return
+            try:
+                if show:
+                    if not widget.winfo_manager():
+                        widget.pack(anchor="w", padx=12, pady=4)
+                else:
+                    widget.pack_forget()
+            except Exception:
+                pass
+
+        for widget in getattr(self, "cinematic_option_widgets", []):
+            _toggle_existing_pack(widget, show_cinematic)
+        for widget in getattr(self, "sparse_alpha_option_widgets", []):
+            _toggle_existing_pack(widget, show_sparse_alpha)
+        for widget in getattr(self, "duckstation_option_widgets", []):
+            _toggle_existing_pack(widget, is_duckstation)
+        for button in getattr(self, "manager_duckstation_action_buttons", []):
+            try:
+                if is_duckstation:
+                    button.grid()
+                else:
+                    button.grid_remove()
+            except Exception:
+                pass
+
     def on_profile_emulator_changed(self, _event=None):
         if self._loading_profile:
             return
@@ -10014,6 +10993,10 @@ class V11App(App):
             "delete_cutscene_var": "delete_skipped_cutscene_buffers",
             "auto_cleanup_cutscene_var": "auto_scan_delete_cutscene_buffers_on_start",
             "auto_quarantine_buffers_var": "auto_quarantine_efb_cutscenes",
+            "skip_sparse_alpha_var": "skip_sparse_alpha_masks",
+            "auto_quarantine_sparse_alpha_var": "auto_quarantine_sparse_alpha_masks_on_start",
+            "duckstation_duplicate_cleanup_var": "duckstation_duplicate_cleanup_on_start",
+            "duckstation_live_duplicate_guard_var": "duckstation_live_duplicate_guard",
             "comfy_monitor_var": "enable_comfy_status",
             "pause_comfy_var": "pause_when_comfy_offline",
             "auto_start_comfy_var": "auto_start_comfy_when_watching",
@@ -10936,14 +11919,50 @@ class V11App(App):
         self.delete_cutscene_var = tk.BooleanVar(value=bool(self.cfg.get("delete_skipped_cutscene_buffers", False)))
         self.auto_cleanup_cutscene_var = tk.BooleanVar(value=bool(self.cfg.get("auto_scan_delete_cutscene_buffers_on_start", False)))
         self.auto_quarantine_buffers_var = tk.BooleanVar(value=bool(self.cfg.get("auto_quarantine_efb_cutscenes", False)))
-        tk.Checkbutton(cutscene, text="Skip cutscene buffers and empty/black dumps", variable=self.cutscene_filter_var).pack(anchor="w", padx=12, pady=4)
-        tk.Checkbutton(cutscene, text="Skip dynamic EFB / post-processing dumps", variable=self.dynamic_efb_filter_var).pack(anchor="w", padx=12, pady=4)
-        tk.Checkbutton(
+        self.skip_sparse_alpha_var = tk.BooleanVar(value=bool(self.cfg.get("skip_sparse_alpha_masks", True)))
+        self.auto_quarantine_sparse_alpha_var = tk.BooleanVar(value=bool(self.cfg.get("auto_quarantine_sparse_alpha_masks_on_start", True)))
+        self.auto_quarantine_stp_texpages_var = tk.BooleanVar(value=bool(self.cfg.get("auto_quarantine_matching_stp_texpages_on_start", True)))
+        self.duckstation_duplicate_cleanup_var = tk.BooleanVar(value=bool(self.cfg.get("duckstation_duplicate_cleanup_on_start", True)))
+        self.duckstation_live_duplicate_guard_var = tk.BooleanVar(value=bool(self.cfg.get("duckstation_live_duplicate_guard", True)))
+        self.cinematic_option_widgets = []
+        self.sparse_alpha_option_widgets = []
+        self.duckstation_option_widgets = []
+
+        w = tk.Checkbutton(cutscene, text="Skip cutscene buffers and empty/black dumps", variable=self.cutscene_filter_var)
+        w.pack(anchor="w", padx=12, pady=4); self.cinematic_option_widgets.append(w)
+        w = tk.Checkbutton(cutscene, text="Skip dynamic EFB / post-processing dumps", variable=self.dynamic_efb_filter_var)
+        w.pack(anchor="w", padx=12, pady=4); self.cinematic_option_widgets.append(w)
+        w = tk.Checkbutton(
             cutscene,
             text="Auto-quarantine strict EFB + cutscenes before watching / each Batch profile",
             variable=self.auto_quarantine_buffers_var
-        ).pack(anchor="w", padx=12, pady=4)
-        bulk_row = tk.Frame(cutscene); bulk_row.pack(fill="x", padx=32, pady=(0, 4))
+        )
+        w.pack(anchor="w", padx=12, pady=4); self.cinematic_option_widgets.append(w)
+        w = tk.Checkbutton(
+            cutscene,
+            text="Skip tiny sparse alpha/mask dumps",
+            variable=self.skip_sparse_alpha_var
+        )
+        w.pack(anchor="w", padx=12, pady=4); self.sparse_alpha_option_widgets.append(w)
+        w = tk.Checkbutton(
+            cutscene,
+            text="Quarantine sparse alpha/mask dumps before watching / each Batch profile",
+            variable=self.auto_quarantine_sparse_alpha_var
+        )
+        w.pack(anchor="w", padx=32, pady=4); self.sparse_alpha_option_widgets.append(w)
+        w = tk.Checkbutton(
+            cutscene,
+            text="DuckStation duplicate cleanup before Comfy queue",
+            variable=self.duckstation_duplicate_cleanup_var
+        )
+        w.pack(anchor="w", padx=12, pady=4); self.duckstation_option_widgets.append(w)
+        w = tk.Checkbutton(
+            cutscene,
+            text="DuckStation live duplicate guard while watching",
+            variable=self.duckstation_live_duplicate_guard_var
+        )
+        w.pack(anchor="w", padx=32, pady=4); self.duckstation_option_widgets.append(w)
+        bulk_row = tk.Frame(cutscene); bulk_row.pack(fill="x", padx=32, pady=(0, 4)); self.cinematic_option_widgets.append(bulk_row)
         tk.Label(bulk_row, text="Live bulk threshold", width=22, anchor="w").pack(side="left")
         self.vars["auto_quarantine_live_threshold"] = tk.StringVar(
             value=str(self.cfg.get("auto_quarantine_live_threshold", 12))
@@ -10955,17 +11974,20 @@ class V11App(App):
         )
         tk.Entry(bulk_row, textvariable=self.vars["auto_quarantine_live_idle_seconds"], width=8).pack(side="left")
         tk.Label(bulk_row, text="seconds idle").pack(side="left", padx=6)
-        tk.Checkbutton(cutscene, text="Quarantine skipped cutscene / blank dumps (legacy per-file mode)", variable=self.delete_cutscene_var).pack(anchor="w", padx=12, pady=4)
-        tk.Checkbutton(
+        w = tk.Checkbutton(cutscene, text="Quarantine skipped cutscene / blank dumps (legacy per-file mode)", variable=self.delete_cutscene_var)
+        w.pack(anchor="w", padx=12, pady=4); self.cinematic_option_widgets.append(w)
+        w = tk.Checkbutton(
             cutscene,
             text="Safe startup blank-dump quarantine",
             variable=self.auto_cleanup_cutscene_var
-        ).pack(anchor="w", padx=12, pady=4)
-        tk.Label(
+        )
+        w.pack(anchor="w", padx=12, pady=4); self.cinematic_option_widgets.append(w)
+        w = tk.Label(
             cutscene,
             text="Strict auto mode is reversible and uses one startup scan plus batched live moves. It does not use Effects/Masks or Safe Blank Cleanup.",
             fg="#65d8cd"
-        ).pack(anchor="w", padx=32, pady=(0, 5))
+        )
+        w.pack(anchor="w", padx=32, pady=(0, 5)); self.cinematic_option_widgets.append(w)
 
         protection = self.section(self.tab_processing, "Status and VRAM protection")
         self.comfy_monitor_var = tk.BooleanVar(value=bool(self.cfg.get("enable_comfy_status", True)))
@@ -11394,11 +12416,76 @@ class V11App(App):
         ttk.Button(row, text="Open Output", style="Compact.TButton", command=lambda: self.open_cfg_folder("load_folder")).pack(side="left", padx=3)
 
         # Adjustable split: texture names on the left, previews/actions on the right.
+        # v11.10.30: host the manager body inside a vertical scroll canvas so
+        # compact screens can scroll down to the full Actions panel and STP buttons.
+        main_scroll_host = tk.Frame(page, bg="#0b1119")
+        main_scroll_host.grid(row=2, column=0, sticky="nsew", padx=14, pady=(0, 14))
+        main_scroll_host.grid_rowconfigure(0, weight=1)
+        main_scroll_host.grid_columnconfigure(0, weight=1)
+        self.manager_main_scroll_canvas = tk.Canvas(
+            main_scroll_host, bg="#0b1119", highlightthickness=0, bd=0
+        )
+        self.manager_main_vscroll = ttk.Scrollbar(
+            main_scroll_host, orient="vertical", command=self.manager_main_scroll_canvas.yview
+        )
+        self.manager_main_scroll_canvas.configure(yscrollcommand=self.manager_main_vscroll.set)
+        self.manager_main_scroll_canvas.grid(row=0, column=0, sticky="nsew")
+        self.manager_main_vscroll.grid(row=0, column=1, sticky="ns", padx=(6, 0))
+
+        self.manager_main_scroll_frame = tk.Frame(self.manager_main_scroll_canvas, bg="#0b1119")
+        self.manager_main_scroll_frame.grid_rowconfigure(0, weight=1)
+        self.manager_main_scroll_frame.grid_columnconfigure(0, weight=1)
+        self.manager_main_scroll_window = self.manager_main_scroll_canvas.create_window(
+            (0, 0), window=self.manager_main_scroll_frame, anchor="nw"
+        )
+        self.manager_main_min_height = 820
+
+        def _manager_main_scroll_frame_configure(_event=None):
+            try:
+                self.manager_main_scroll_canvas.configure(
+                    scrollregion=self.manager_main_scroll_canvas.bbox("all")
+                )
+            except Exception:
+                pass
+
+        def _manager_main_scroll_canvas_configure(event=None):
+            try:
+                canvas_width = int(event.width if event is not None else self.manager_main_scroll_canvas.winfo_width())
+                canvas_height = int(event.height if event is not None else self.manager_main_scroll_canvas.winfo_height())
+                requested_height = max(
+                    canvas_height,
+                    int(getattr(self, "manager_main_min_height", 820)),
+                    int(self.manager_main_scroll_frame.winfo_reqheight() or 0),
+                )
+                self.manager_main_scroll_canvas.itemconfigure(
+                    self.manager_main_scroll_window, width=max(1, canvas_width), height=max(1, requested_height)
+                )
+                self.manager_main_scroll_canvas.configure(
+                    scrollregion=self.manager_main_scroll_canvas.bbox("all")
+                )
+            except Exception:
+                pass
+
+        def _manager_main_mousewheel(event):
+            try:
+                delta = int(getattr(event, "delta", 0) or 0)
+                if delta:
+                    self.manager_main_scroll_canvas.yview_scroll(int(-1 * (delta / 120)), "units")
+                    return "break"
+            except Exception:
+                return None
+            return None
+
+        self.manager_main_scroll_frame.bind("<Configure>", _manager_main_scroll_frame_configure)
+        self.manager_main_scroll_canvas.bind("<Configure>", _manager_main_scroll_canvas_configure)
+        self.manager_main_scroll_canvas.bind("<MouseWheel>", _manager_main_mousewheel)
+        self.manager_main_scroll_frame.bind("<MouseWheel>", _manager_main_mousewheel)
+
         main = tk.PanedWindow(
-            page, orient="horizontal", bg="#0b1119", bd=0,
+            self.manager_main_scroll_frame, orient="horizontal", bg="#0b1119", bd=0,
             sashwidth=8, sashrelief="flat", opaqueresize=True
         )
-        main.grid(row=2, column=0, sticky="nsew", padx=14, pady=(0, 14))
+        main.grid(row=0, column=0, sticky="nsew")
         self.manager_main_panes = main
 
         left_host = tk.Frame(main, bg="#0b1119", width=430)
@@ -11424,8 +12511,10 @@ class V11App(App):
             activestyle="none", font=("Consolas", 9)
         )
         list_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.manager_list.yview)
-        self.manager_list.configure(yscrollcommand=list_scroll.set)
+        list_xscroll = ttk.Scrollbar(list_frame, orient="horizontal", command=self.manager_list.xview)
+        self.manager_list.configure(yscrollcommand=list_scroll.set, xscrollcommand=list_xscroll.set)
         list_scroll.pack(side="right", fill="y")
+        list_xscroll.pack(side="bottom", fill="x")
         self.manager_list.pack(side="left", fill="both", expand=True)
         self.manager_list.bind("<<ListboxSelect>>", self._manager_on_select)
 
@@ -11436,10 +12525,10 @@ class V11App(App):
         )
         right_panes.pack(fill="both", expand=True)
         self.manager_right_panes = right_panes
-        preview_host = tk.Frame(right_panes, bg="#0b1119", height=405)
-        actions_host = tk.Frame(right_panes, bg="#0b1119", height=285)
-        right_panes.add(preview_host, minsize=280, height=405, stretch="always")
-        right_panes.add(actions_host, minsize=245, height=285)
+        preview_host = tk.Frame(right_panes, bg="#0b1119", height=380)
+        actions_host = tk.Frame(right_panes, bg="#0b1119", height=360)
+        right_panes.add(preview_host, minsize=260, height=380, stretch="always")
+        right_panes.add(actions_host, minsize=330, height=360)
 
         preview_outer, preview = self._dashboard_panel(preview_host, "Selected texture", padx=10, pady=9)
         preview_outer.pack(fill="both", expand=True)
@@ -11512,9 +12601,16 @@ class V11App(App):
             (6, 1, "Restore All Quarantined", "Secondary.TButton", self._manager_restore_all),
             (6, 2, "Open Quarantine", "Compact.TButton", self._manager_open_quarantine_folder),
             (6, 3, "Clear Search", "Compact.TButton", lambda: self.manager_search_var.set("")),
+            (7, 0, "Clean duplicate STP Outputs", "Secondary.TButton", lambda: self.manager_quarantine_duplicate_stp_replacements(refresh_callback=lambda: self._manager_refresh_async(force=True))),
+            (7, 1, "Quarantine all STP Dumps", "Danger.TButton", lambda: self.manager_quarantine_all_stp_dumps(refresh_callback=lambda: self._manager_refresh_async(force=True))),
+            (7, 2, "Quarantine all STP Outputs", "Danger.TButton", lambda: self.manager_quarantine_all_stp_replacements(refresh_callback=lambda: self._manager_refresh_async(force=True))),
         ]
+        self.manager_duckstation_action_buttons = []
         for r, c, label, style, command in buttons:
-            ttk.Button(grid, text=label, style=style, command=command).grid(row=r, column=c, sticky="ew", padx=3, pady=3)
+            button = ttk.Button(grid, text=label, style=style, command=command)
+            button.grid(row=r, column=c, sticky="ew", padx=3, pady=3)
+            if "STP" in label or "DuckStation" in label:
+                self.manager_duckstation_action_buttons.append(button)
 
         self.manager_all_files = []
         self.manager_quarantined_files = []
@@ -11524,6 +12620,7 @@ class V11App(App):
         self.manager_visible_entries = []
         self.manager_output_status = {}
         self.manager_visual_status = {}
+        self._update_emulator_specific_controls()
         self.manager_transparency_status = {}
         self.manager_file_stats = {}
         self.manager_filter_generation = 0
@@ -11549,6 +12646,11 @@ class V11App(App):
         self.manager_dirty = False
         self.manager_last_auto_refresh_at = 0.0
         self.manager_last_dirty_at = 0.0
+        # Refresh preservation: automatic scans may rebuild the list while the
+        # user is inspecting a texture. Keep the selected texture and current
+        # viewport stable instead of falling back to the first row after each
+        # live refresh tick.
+        self.manager_last_selection_state = {}
         self.manager_search_var.trace_add("write", lambda *_: self._manager_apply_filter())
         self.after(1800, self._manager_auto_refresh_tick)
 
@@ -11714,6 +12816,25 @@ class V11App(App):
         previous_file_stats = dict(getattr(self, "manager_file_stats", {}) or {})
         previous_visual_status = dict(getattr(self, "manager_visual_status", {}) or {})
         previous_transparency_status = dict(getattr(self, "manager_transparency_status", {}) or {})
+        # v11.10.26: keep the normal Texture Manager scan fast.
+        # The old scan opened/classified every image to detect masks, alpha and
+        # resolution. On packs with tens of thousands of tiny dumps this made the
+        # UI sit on "Scanning textures…" for a long time before showing anything.
+        # We only do the expensive Pillow-based visual classification when the
+        # current filter/sort/group actually needs it. The default list now loads
+        # from filesystem metadata first, then visual metadata can be requested
+        # explicitly by using Masks/Alpha/Resolution filters, groups or sorts.
+        filter_vars_snapshot = getattr(self, "manager_filter_vars", {}) or {}
+        visual_filter_requested = bool(
+            (filter_vars_snapshot.get("mask_grayscale") and filter_vars_snapshot["mask_grayscale"].get()) or
+            (filter_vars_snapshot.get("color_rgb") and filter_vars_snapshot["color_rgb"].get()) or
+            (filter_vars_snapshot.get("has_transparency") and filter_vars_snapshot["has_transparency"].get())
+        )
+        sort_snapshot = manager_sort_code(self.manager_sort_var.get() if hasattr(self, "manager_sort_var") else cfg.get("manager_sort_by", "modified_newest"))
+        group_snapshot = manager_group_code(self.manager_group_var.get() if hasattr(self, "manager_group_var") else cfg.get("manager_group_by", "none"))
+        visual_sort_requested = sort_snapshot in {"alpha_first", "opaque_first", "masks_first", "color_first", "resolution_largest", "resolution_smallest"}
+        visual_group_requested = group_snapshot in {"type", "alpha", "resolution"}
+        need_visual_metadata = bool(visual_filter_requested or visual_sort_requested or visual_group_requested)
 
         def scan_worker():
             items = []
@@ -11763,15 +12884,20 @@ class V11App(App):
                     # off the UI thread and cached. Grayscale classification ignores
                     # transparent background pixels so colored cutouts remain Color/RGB.
                     if not reuse_metadata:
-                        try:
-                            classification = classify_texture_visual_type(p)
-                            visual_status[key] = bool(classification.get("mask_grayscale", False))
-                            transparency_status[key] = bool(classification.get("has_transparency", False))
-                            file_stats[key]["dimensions"] = classification.get("dimensions")
-                            file_stats[key]["pixels"] = int(classification.get("pixels") or 0)
-                        except Exception:
-                            visual_status[key] = False
-                            transparency_status[key] = False
+                        if need_visual_metadata:
+                            try:
+                                classification = classify_texture_visual_type(p)
+                                visual_status[key] = bool(classification.get("mask_grayscale", False))
+                                transparency_status[key] = bool(classification.get("has_transparency", False))
+                                file_stats[key]["dimensions"] = classification.get("dimensions")
+                                file_stats[key]["pixels"] = int(classification.get("pixels") or 0)
+                            except Exception:
+                                visual_status[key] = False
+                                transparency_status[key] = False
+                        else:
+                            # Fast path: do not open the image during a normal list refresh.
+                            visual_status[key] = bool(previous_visual_status.get(key, False))
+                            transparency_status[key] = bool(previous_transparency_status.get(key, False))
                 items.sort(key=lambda item: item[0], reverse=True)
                 result = [p for _stamp, p in items]
 
@@ -11824,15 +12950,19 @@ class V11App(App):
                             file_stats[key] = {"mtime": ostamp, "size": osize, "dimensions": None, "pixels": 0}
                         orphan_items.append((ostamp, out_path))
                         if not reuse_metadata:
-                            try:
-                                classification = classify_texture_visual_type(out_path)
-                                visual_status[key] = bool(classification.get("mask_grayscale", False))
-                                transparency_status[key] = bool(classification.get("has_transparency", False))
-                                file_stats[key]["dimensions"] = classification.get("dimensions")
-                                file_stats[key]["pixels"] = int(classification.get("pixels") or 0)
-                            except Exception:
-                                visual_status[key] = False
-                                transparency_status[key] = False
+                            if need_visual_metadata:
+                                try:
+                                    classification = classify_texture_visual_type(out_path)
+                                    visual_status[key] = bool(classification.get("mask_grayscale", False))
+                                    transparency_status[key] = bool(classification.get("has_transparency", False))
+                                    file_stats[key]["dimensions"] = classification.get("dimensions")
+                                    file_stats[key]["pixels"] = int(classification.get("pixels") or 0)
+                                except Exception:
+                                    visual_status[key] = False
+                                    transparency_status[key] = False
+                            else:
+                                visual_status[key] = bool(previous_visual_status.get(key, False))
+                                transparency_status[key] = bool(previous_transparency_status.get(key, False))
 
                 for stamp, qpath, metadata in iter_quarantined_images(
                     profile_dir, dump_folder, process_tmp
@@ -11861,15 +12991,19 @@ class V11App(App):
                     quarantine_items.append((stamp, qpath))
                     quarantine_metadata[key] = metadata
                     if not reuse_metadata:
-                        try:
-                            classification = classify_texture_visual_type(qpath)
-                            visual_status[key] = bool(classification.get("mask_grayscale", False))
-                            transparency_status[key] = bool(classification.get("has_transparency", False))
-                            file_stats[key]["dimensions"] = classification.get("dimensions")
-                            file_stats[key]["pixels"] = int(classification.get("pixels") or 0)
-                        except Exception:
-                            visual_status[key] = False
-                            transparency_status[key] = False
+                        if need_visual_metadata:
+                            try:
+                                classification = classify_texture_visual_type(qpath)
+                                visual_status[key] = bool(classification.get("mask_grayscale", False))
+                                transparency_status[key] = bool(classification.get("has_transparency", False))
+                                file_stats[key]["dimensions"] = classification.get("dimensions")
+                                file_stats[key]["pixels"] = int(classification.get("pixels") or 0)
+                            except Exception:
+                                visual_status[key] = False
+                                transparency_status[key] = False
+                        else:
+                            visual_status[key] = bool(previous_visual_status.get(key, False))
+                            transparency_status[key] = bool(previous_transparency_status.get(key, False))
                 orphan_items.sort(key=lambda item: item[0], reverse=True)
                 orphaned_result = [p for _stamp, p in orphan_items]
                 quarantined_result = [p for _stamp, p in quarantine_items]
@@ -12014,9 +13148,144 @@ class V11App(App):
             var.set(not var.get())
             self._manager_filter_changed()
 
+    def _manager_capture_list_state(self):
+        """Capture Texture Manager selection and viewport before rebuilding.
+
+        The live refresh system can rebuild the Listbox whenever watcher/batch
+        activity changes counts or file metadata. Without an explicit state
+        capture, Tk loses the current selection when rows are deleted, and the
+        old code auto-selected the first texture after reinsert. That made the
+        manager jump back to the first texture during normal watching.
+        """
+        state = {"selected_keys": [], "primary_key": None, "top_key": None, "top_index": 0, "yview": None}
+        lb = getattr(self, "manager_list", None)
+        entries = getattr(self, "manager_visible_entries", []) or []
+        if lb is None:
+            return state
+        try:
+            state["yview"] = tuple(lb.yview())
+        except Exception:
+            state["yview"] = None
+        try:
+            top_index = int(lb.nearest(0))
+        except Exception:
+            top_index = 0
+        state["top_index"] = max(0, top_index)
+        if entries:
+            for idx in range(state["top_index"], min(len(entries), state["top_index"] + 25)):
+                entry = entries[idx]
+                if entry is not None:
+                    state["top_key"] = str(entry)
+                    break
+        selected = []
+        try:
+            selected_indices = list(lb.curselection())
+        except Exception:
+            selected_indices = []
+        for idx in selected_indices:
+            try:
+                if 0 <= int(idx) < len(entries):
+                    entry = entries[int(idx)]
+                    if entry is not None:
+                        selected.append(str(entry))
+            except Exception:
+                continue
+        state["selected_keys"] = selected
+        state["primary_key"] = selected[0] if selected else None
+        return state
+
+    def _manager_restore_list_state(self, generation, state, allow_initial_select=True):
+        """Restore Texture Manager selection/scroll after async row insertion."""
+        if generation != getattr(self, "manager_filter_generation", None):
+            return False
+        lb = getattr(self, "manager_list", None)
+        entries = getattr(self, "manager_visible_entries", []) or []
+        if lb is None or not entries or not lb.size():
+            return False
+        state = dict(state or {})
+        selected_keys = list(state.get("selected_keys") or [])
+        selected_key_set = set(selected_keys)
+        primary_key = state.get("primary_key")
+        top_key = state.get("top_key")
+
+        key_to_indices = {}
+        first_texture_index = None
+        for idx, entry in enumerate(entries):
+            if entry is None:
+                continue
+            if first_texture_index is None:
+                first_texture_index = idx
+            key_to_indices.setdefault(str(entry), []).append(idx)
+
+        restored_indices = []
+        if selected_key_set:
+            for key in selected_keys:
+                restored_indices.extend(key_to_indices.get(key, []))
+            # Preserve original selection order while avoiding duplicates.
+            deduped = []
+            seen = set()
+            for idx in restored_indices:
+                if idx not in seen:
+                    deduped.append(idx)
+                    seen.add(idx)
+            restored_indices = deduped
+
+        try:
+            lb.selection_clear(0, "end")
+        except Exception:
+            pass
+
+        if restored_indices:
+            for idx in restored_indices:
+                try:
+                    lb.selection_set(idx)
+                except Exception:
+                    pass
+            focus_idx = None
+            if primary_key in key_to_indices:
+                focus_idx = key_to_indices[primary_key][0]
+            if focus_idx is None:
+                focus_idx = restored_indices[0]
+            try:
+                lb.activate(focus_idx)
+                lb.see(focus_idx)
+            except Exception:
+                pass
+            self._manager_on_select()
+            return True
+
+        # No selected texture survived the refresh. Keep the user's current
+        # scroll neighborhood if possible, but do not force-select the first
+        # texture unless this is an initial empty selection load.
+        if top_key in key_to_indices:
+            try:
+                lb.see(key_to_indices[top_key][0])
+            except Exception:
+                pass
+            return False
+
+        yview = state.get("yview")
+        if isinstance(yview, (list, tuple)) and yview:
+            try:
+                lb.yview_moveto(float(yview[0]))
+            except Exception:
+                pass
+
+        if allow_initial_select and not selected_keys and first_texture_index is not None:
+            try:
+                lb.selection_set(first_texture_index)
+                lb.activate(first_texture_index)
+                lb.see(first_texture_index)
+            except Exception:
+                pass
+            self._manager_on_select()
+            return True
+        return False
+
     def _manager_apply_filter(self):
         if not hasattr(self, "manager_list"):
             return
+        previous_state = self._manager_capture_list_state()
         self.manager_filter_generation += 1
         generation = self.manager_filter_generation
         query = self.manager_search_var.get().strip().casefold()
@@ -12033,6 +13302,11 @@ class V11App(App):
         filter_quarantined = bool(filter_vars.get("quarantined") and filter_vars["quarantined"].get())
         sort_code = manager_sort_code(self.manager_sort_var.get() if hasattr(self, "manager_sort_var") else self.cfg.get("manager_sort_by", "modified_newest"))
         group_code = manager_group_code(self.manager_group_var.get() if hasattr(self, "manager_group_var") else self.cfg.get("manager_group_by", "none"))
+        visual_metadata_requested = bool(
+            filter_masks or filter_color or filter_transparency or
+            sort_code in {"alpha_first", "opaque_first", "masks_first", "color_first", "resolution_largest", "resolution_smallest"} or
+            group_code in {"type", "alpha", "resolution"}
+        )
 
         ctx = self._manager_context(show_errors=False)
         dump_folder = None
@@ -12083,6 +13357,19 @@ class V11App(App):
             source_files = getattr(self, "manager_orphaned_outputs", [])
         else:
             source_files = self.manager_all_files
+
+        if visual_metadata_requested and source_files and not getattr(self, "manager_scan_running", False):
+            incomplete = False
+            for probe in source_files[:250]:
+                meta = self.manager_file_stats.get(str(probe), {}) if hasattr(self, "manager_file_stats") else {}
+                if not isinstance(meta, dict) or meta.get("dimensions") is None:
+                    incomplete = True
+                    break
+            if incomplete:
+                self.manager_count_var.set("Scanning visual metadata for current Texture Manager filter…")
+                self._manager_refresh_async(force=True)
+                return
+
         for p in source_files:
             haystack = f"{p.name} {p}".casefold()
             if query and query not in haystack:
@@ -12292,9 +13579,9 @@ class V11App(App):
                 else ("No orphaned outputs match the current filter." if filter_orphaned else "No textures match the current filter.")
             )
             return
-        self._manager_insert_rows(generation, limited_rows, 0, total, suffix + filter_suffix, shown)
+        self._manager_insert_rows(generation, limited_rows, 0, total, suffix + filter_suffix, shown, previous_state)
 
-    def _manager_insert_rows(self, generation, rows, start, total, suffix, texture_count=None):
+    def _manager_insert_rows(self, generation, rows, start, total, suffix, texture_count=None, previous_state=None):
         if generation != self.manager_filter_generation:
             return
         end = min(len(rows), start + 350)
@@ -12302,20 +13589,11 @@ class V11App(App):
             self.manager_list.insert("end", row)
         self.manager_count_var.set(f"{end:,} / {len(rows):,} rows loaded")
         if end < len(rows):
-            self.after(1, lambda: self._manager_insert_rows(generation, rows, end, total, suffix, texture_count))
+            self.after(1, lambda: self._manager_insert_rows(generation, rows, end, total, suffix, texture_count, previous_state))
             return
         shown = texture_count if texture_count is not None else len(rows)
         self.manager_count_var.set(f"{shown:,} shown / {total:,} total{suffix}")
-        if self.manager_list.size() and not self.manager_list.curselection():
-            first_index = None
-            for idx, entry in enumerate(getattr(self, "manager_visible_entries", [])):
-                if entry is not None:
-                    first_index = idx
-                    break
-            if first_index is not None:
-                self.manager_list.selection_set(first_index)
-                self.manager_list.see(first_index)
-                self._manager_on_select()
+        self._manager_restore_list_state(generation, previous_state, allow_initial_select=True)
 
     def _manager_selected_paths(self):
         out = []
@@ -13012,6 +14290,288 @@ class V11App(App):
             "Open Texture Manager → Filter → Quarantined to preview or restore them."
         )
 
+    def manager_quarantine_duplicate_stp_replacements(self, refresh_callback=None):
+        """Move duplicated STP/ST replacement outputs out of the active Load folder."""
+        if self.batch_active or (self.worker_thread and self.worker_thread.is_alive()):
+            messagebox.showinfo(
+                "STP replacement cleanup unavailable",
+                "Stop watching and stop the Batch Queue before moving replacement outputs."
+            )
+            return
+        try:
+            cfg = self.collect()
+            load_text = str(cfg.get("load_folder", "") or "").strip()
+            if not load_text:
+                messagebox.showerror("STP replacement cleanup", "No replacement/load folder is configured for this profile.")
+                return
+            load_folder = Path(load_text)
+            if not load_folder.exists():
+                messagebox.showerror("STP replacement cleanup", "The configured replacement/load folder does not exist.")
+                return
+        except Exception as exc:
+            messagebox.showerror("STP replacement cleanup", str(exc))
+            return
+
+        if not messagebox.askyesno(
+            "Clean duplicate STP replacements",
+            "Scan the replacement/load folder for texpage-STP/ST outputs that have an exact matching texpage-P/T output?\n\n"
+            "Only duplicated STP/ST replacements will be moved out. Non-duplicated STP/ST files will be kept.\n"
+            "Nothing is permanently deleted."
+        ):
+            return
+
+        result = find_matching_stp_texpage_duplicates_in_tree(
+            load_folder,
+            process_tmp=bool(cfg.get("process_tmp_image_files", True)),
+        )
+        candidates = result.get("candidates", [])
+        if not candidates:
+            messagebox.showinfo(
+                "STP replacement cleanup",
+                f"Scanned: {result.get('scanned', 0):,}\n"
+                f"STP/ST outputs seen: {result.get('stp_seen', 0):,}\n"
+                f"Duplicated pairs: 0\n"
+                f"Non-duplicated STP/ST kept: {result.get('missing_counterpart', 0):,}"
+            )
+            return
+
+        if not messagebox.askyesno(
+            "Confirm duplicate STP replacement cleanup",
+            f"Replacement folder:\n{load_folder}\n\n"
+            f"Scanned: {result.get('scanned', 0):,}\n"
+            f"STP/ST outputs seen: {result.get('stp_seen', 0):,}\n"
+            f"Duplicated STP/ST outputs to move: {len(candidates):,}\n"
+            f"Non-duplicated STP/ST kept: {result.get('missing_counterpart', 0):,}\n\n"
+            "Move only the duplicated STP/ST replacement outputs out of the active replacement pack?"
+        ):
+            return
+
+        profile_dir = PROFILES_DIR / safe_profile_name(self.current_profile_name)
+        session = profile_dir / "_replacement_quarantine" / f"stp-replacements-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        moved_rows, failure_rows = quarantine_files_bulk_preserve_tree(
+            candidates, load_folder, session, manifest_flush_every=250
+        )
+        moved = len(moved_rows)
+        failed = len(failure_rows)
+        for source, destination, category, reason in moved_rows[:25]:
+            self.log(f"Duplicate STP replacement moved: {source.name} ({reason}) -> {destination}")
+        for path, error in failure_rows[:20]:
+            self.log(f"Duplicate STP replacement cleanup failed: {path.name}: {error}")
+        self.log(
+            "Duplicate STP replacement cleanup complete: "
+            f"scanned={result.get('scanned', 0)}, STP/ST seen={result.get('stp_seen', 0)}, "
+            f"matched={len(candidates)}, moved={moved}, failed={failed}, "
+            f"kept-non-duplicates={result.get('missing_counterpart', 0)}"
+        )
+        if moved:
+            self.log(f"Replacement quarantine folder: {session}")
+        if callable(refresh_callback):
+            try:
+                refresh_callback()
+            except Exception:
+                pass
+        text = (
+            f"Scanned: {result.get('scanned', 0):,}\n"
+            f"Duplicated STP/ST replacements detected: {len(candidates):,}\n"
+            f"Moved out of replacement pack: {moved:,}\n"
+            f"Failed: {failed:,}\n"
+            f"Non-duplicated STP/ST kept: {result.get('missing_counterpart', 0):,}\n\n"
+            f"Quarantine folder:\n{session}"
+        )
+        messagebox.showinfo("STP replacement cleanup complete", text)
+
+
+
+    def manager_quarantine_all_stp_dumps(self, refresh_callback=None):
+        """Manually move every STP/ST texpage dump out of the active dump folder."""
+        if self.batch_active or (self.worker_thread and self.worker_thread.is_alive()):
+            messagebox.showinfo(
+                "All STP dump quarantine unavailable",
+                "Stop watching and stop the Batch Queue before moving dump files to quarantine."
+            )
+            return
+        try:
+            cfg = self.collect()
+            dump_text = str(cfg.get("dump_folder", "") or "").strip()
+            if not dump_text:
+                messagebox.showerror("All STP dump quarantine", "No dump folder is configured for this profile.")
+                return
+            dump_folder = Path(dump_text)
+            if not dump_folder.exists():
+                messagebox.showerror("All STP dump quarantine", "The configured dump folder does not exist.")
+                return
+            load_text = str(cfg.get("load_folder", "") or "").strip()
+            load_folder = Path(load_text) if load_text else None
+            exclude_load_tree = load_folder if (load_folder and is_path_within(load_folder, dump_folder)) else None
+        except Exception as exc:
+            messagebox.showerror("All STP dump quarantine", str(exc))
+            return
+
+        if not messagebox.askyesno(
+            "Quarantine all STP dumps",
+            "Scan the dump folder and quarantine ALL texpage-STP/ST variants, not only duplicates?\n\n"
+            "Use this for aggressive Soul Reaver cleanup/testing. Non-duplicated STP/ST files can be useful, so this button is manual only.\n"
+            "Nothing is permanently deleted."
+        ):
+            return
+
+        try:
+            self.configure(cursor="wait")
+            self.update_idletasks()
+            self.log(f"All STP dump quarantine scanning: {dump_folder}")
+            result = find_all_stp_texpage_variants_in_tree(
+                dump_folder,
+                process_tmp=bool(cfg.get("process_tmp_image_files", True)),
+                exclude_folder=exclude_load_tree,
+            )
+        finally:
+            try:
+                self.configure(cursor="")
+                self.title(APP_TITLE)
+            except Exception:
+                pass
+
+        candidates = result.get("candidates", [])
+        if not candidates:
+            messagebox.showinfo(
+                "All STP dump quarantine",
+                f"Scanned: {result.get('scanned', 0):,}\n"
+                "STP/ST dumps detected: 0"
+            )
+            return
+
+        if not messagebox.askyesno(
+            "Confirm all STP dump quarantine",
+            f"Dump folder:\n{dump_folder}\n\n"
+            f"Scanned: {result.get('scanned', 0):,}\n"
+            f"STP/ST dumps to move: {len(candidates):,}\n\n"
+            "Move ALL detected STP/ST texpage dumps to quarantine?"
+        ):
+            return
+
+        profile_dir = PROFILES_DIR / safe_profile_name(self.current_profile_name)
+        session = profile_dir / "_cleanup_quarantine" / f"stp-dumps-all-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        moved_rows, failure_rows = quarantine_dumps_bulk(candidates, dump_folder, session, manifest_flush_every=500)
+        moved = len(moved_rows)
+        failed = len(failure_rows)
+        for source, destination, category, reason in moved_rows[:25]:
+            self.log(f"All STP dump quarantined: {source.name} -> {destination}")
+        for path, error in failure_rows[:20]:
+            self.log(f"All STP dump quarantine failed: {path.name}: {error}")
+        self.log(
+            "All STP dump quarantine complete: "
+            f"scanned={result.get('scanned', 0)}, detected={len(candidates)}, moved={moved}, failed={failed}"
+        )
+        if moved:
+            self.log(f"All STP dump quarantine folder: {session}")
+        if callable(refresh_callback):
+            try:
+                refresh_callback()
+            except Exception:
+                pass
+        text = (
+            f"Scanned: {result.get('scanned', 0):,}\n"
+            f"STP/ST dumps detected: {len(candidates):,}\n"
+            f"Moved to quarantine: {moved:,}\n"
+            f"Failed: {failed:,}\n\n"
+            f"Quarantine folder:\n{session}"
+        )
+        messagebox.showinfo("All STP dump quarantine complete", text)
+
+    def manager_quarantine_all_stp_replacements(self, refresh_callback=None):
+        """Manually move every STP/ST texpage replacement output out of the load folder."""
+        if self.batch_active or (self.worker_thread and self.worker_thread.is_alive()):
+            messagebox.showinfo(
+                "All STP output quarantine unavailable",
+                "Stop watching and stop the Batch Queue before moving replacement outputs."
+            )
+            return
+        try:
+            cfg = self.collect()
+            load_text = str(cfg.get("load_folder", "") or "").strip()
+            if not load_text:
+                messagebox.showerror("All STP output quarantine", "No replacement/load folder is configured for this profile.")
+                return
+            load_folder = Path(load_text)
+            if not load_folder.exists():
+                messagebox.showerror("All STP output quarantine", "The configured replacement/load folder does not exist.")
+                return
+        except Exception as exc:
+            messagebox.showerror("All STP output quarantine", str(exc))
+            return
+
+        if not messagebox.askyesno(
+            "Quarantine all STP outputs",
+            "Scan the replacement/load folder and quarantine ALL texpage-STP/ST outputs, not only duplicates?\n\n"
+            "This is more aggressive than Clean duplicate STP Outputs. Use it when the active replacement pack is showing black alpha artifacts.\n"
+            "Nothing is permanently deleted."
+        ):
+            return
+
+        try:
+            self.configure(cursor="wait")
+            self.update_idletasks()
+            self.log(f"All STP output quarantine scanning: {load_folder}")
+            result = find_all_stp_texpage_variants_in_tree(
+                load_folder,
+                process_tmp=bool(cfg.get("process_tmp_image_files", True)),
+            )
+        finally:
+            try:
+                self.configure(cursor="")
+                self.title(APP_TITLE)
+            except Exception:
+                pass
+
+        candidates = result.get("candidates", [])
+        if not candidates:
+            messagebox.showinfo(
+                "All STP output quarantine",
+                f"Scanned: {result.get('scanned', 0):,}\n"
+                "STP/ST outputs detected: 0"
+            )
+            return
+
+        if not messagebox.askyesno(
+            "Confirm all STP output quarantine",
+            f"Replacement folder:\n{load_folder}\n\n"
+            f"Scanned: {result.get('scanned', 0):,}\n"
+            f"STP/ST outputs to move: {len(candidates):,}\n\n"
+            "Move ALL detected STP/ST texpage outputs out of the active replacement pack?"
+        ):
+            return
+
+        profile_dir = PROFILES_DIR / safe_profile_name(self.current_profile_name)
+        session = profile_dir / "_replacement_quarantine" / f"stp-outputs-all-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        moved_rows, failure_rows = quarantine_files_bulk_preserve_tree(
+            candidates, load_folder, session, manifest_flush_every=500
+        )
+        moved = len(moved_rows)
+        failed = len(failure_rows)
+        for source, destination, category, reason in moved_rows[:25]:
+            self.log(f"All STP output quarantined: {source.name} -> {destination}")
+        for path, error in failure_rows[:20]:
+            self.log(f"All STP output quarantine failed: {path.name}: {error}")
+        self.log(
+            "All STP output quarantine complete: "
+            f"scanned={result.get('scanned', 0)}, detected={len(candidates)}, moved={moved}, failed={failed}"
+        )
+        if moved:
+            self.log(f"All STP output quarantine folder: {session}")
+        if callable(refresh_callback):
+            try:
+                refresh_callback()
+            except Exception:
+                pass
+        text = (
+            f"Scanned: {result.get('scanned', 0):,}\n"
+            f"STP/ST outputs detected: {len(candidates):,}\n"
+            f"Moved out of replacement pack: {moved:,}\n"
+            f"Failed: {failed:,}\n\n"
+            f"Quarantine folder:\n{session}"
+        )
+        messagebox.showinfo("All STP output quarantine complete", text)
+
     def mass_delete_cutscene_black_dumps(self, refresh_callback=None):
         """Scan the current dump tree and quarantine provably blank dumps.
 
@@ -13239,6 +14799,12 @@ class V11App(App):
         cfg["prioritize_new_dumps"] = bool(self.priority_var.get())
         cfg["skip_cutscene_buffers"] = bool(self.cutscene_filter_var.get())
         cfg["skip_dynamic_efb_postprocess"] = bool(self.dynamic_efb_filter_var.get())
+        cfg["skip_sparse_alpha_masks"] = bool(self.skip_sparse_alpha_var.get() if hasattr(self, "skip_sparse_alpha_var") else True)
+        cfg["auto_quarantine_sparse_alpha_masks_on_start"] = bool(self.auto_quarantine_sparse_alpha_var.get() if hasattr(self, "auto_quarantine_sparse_alpha_var") else True)
+        cfg["duckstation_duplicate_cleanup_on_start"] = bool(self.duckstation_duplicate_cleanup_var.get() if hasattr(self, "duckstation_duplicate_cleanup_var") else True)
+        cfg["duckstation_live_duplicate_guard"] = bool(self.duckstation_live_duplicate_guard_var.get() if hasattr(self, "duckstation_live_duplicate_guard_var") else True)
+        cfg["auto_quarantine_matching_stp_texpages_on_start"] = bool(cfg.get("duckstation_duplicate_cleanup_on_start", True))
+        cfg["guard_matching_stp_texpages_before_process"] = bool(cfg.get("duckstation_duplicate_cleanup_on_start", True))
         cfg["delete_skipped_cutscene_buffers"] = bool(self.delete_cutscene_var.get())
         cfg["auto_scan_delete_cutscene_buffers_on_start"] = bool(self.auto_cleanup_cutscene_var.get())
         cfg["auto_quarantine_efb_cutscenes"] = bool(
@@ -13330,6 +14896,10 @@ class V11App(App):
                 "auto_buffer_quarantine_moved": 0,
                 "auto_buffer_quarantine_failed": 0,
                 "auto_buffer_quarantine_recent_skipped": 0,
+                "stp_texpage_duplicates_scanned": 0,
+                "stp_texpage_duplicates_detected": 0,
+                "stp_texpage_duplicates_quarantined": 0, "stp_texpage_duplicates_failed": 0,
+                "stp_texpage_duplicates_failed": 0,
                 "current_input_path": "", "current_output_path": "",
                 "current_texture_stage": "Waiting", "current_texture_started_at": 0.0,
                 "current_faithfulness_preset": normalize_faithfulness_preset(self.faithfulness_preset_var.get()),

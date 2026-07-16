@@ -1,32 +1,15 @@
-Faithful Remaster v11.10.22 validation
+Faithful Remaster v11.10.28 — STP Duplicate Guard
 
-- Built from Faithful-Remaster-v11.10.21-Version-Sync-Windows.zip.
-- VERSION single source updated to 11.10.22.
-- APP_VERSION resolves to 11.10.22.
-- APP_TITLE resolves to Faithful Remaster v11.10.22.
-- Universal layer preserves APP_VERSION and no longer overrides the UI with old release numbers.
-- Added GitHub-ready README/tutorial/release docs only.
-- Bundled workflow JSON files are unchanged from v11.10.21.
-- Processing logic, cache hash behavior, Alpha route, EFB quarantine, workflow selection and Batch Queue logic are preserved.
+Validation performed:
+- Python syntax check: passed
+- STP/P duplicate matcher smoke test: passed
+- ST/T duplicate matcher smoke test: passed
+- Non-duplicated STP preservation smoke test: passed
+- Replacement quarantine helper smoke test: passed
+- Zip integrity test: passed after packaging
 
-Faithful Remaster v11.10.21 validation
-
-- Built from Faithful-Remaster-v11.10.20-Batch-Queue-Previous-Windows.zip.
-- Added VERSION single source: 11.10.21.
-- APP_VERSION now loads from VERSION.
-- Removed the stale universal-layer app-version override that forced v11.10.17.
-- UI-visible APP_TITLE resolves to Faithful Remaster v11.10.21 after universal install.
-- No workflows or processing logic changed.
-
-Previous validation notes:
-Faithful Remaster v11.10.20 validation
-
-- Built from Faithful-Remaster-v11.10.19-Batch-Queue-Skip-Hardened-Windows.zip.
-- APP_VERSION updated to 11.10.20.
-- Added Batch Queue Previous game button.
-- Previous is disabled on the first profile and during pending navigation.
-- Stop Batch remains whole-queue stop.
-- Skip to next game remains forward-only navigation.
-- Workflows unchanged.
-- py_compile passed.
-- Zip integrity test passed.
+Core behavior:
+- STP/ST dumps are not globally deleted.
+- STP/ST dumps are quarantined only when an exact P/T counterpart exists in the same folder.
+- Non-duplicated STP/ST dumps remain active and can be remastered.
+- Texture Manager can clean duplicated STP/ST outputs from the replacement pack.

@@ -27,7 +27,7 @@ except Exception:
     PIL_OK = False
 
 
-_UNIVERSAL_LAYER_VERSION = "11.10.22-github-release-docs-v1"
+_UNIVERSAL_LAYER_VERSION = "11.10.25-manager-refresh-selection-v1"
 
 # Prevent the startup thread and the live watchdog from spawning duplicate
 # backend processes while ComfyUI is still booting.
@@ -43,7 +43,7 @@ def install(fr):
     this layer to v11.10.17, which made the packaged build name and the visible
     UI version disagree.
     """
-    app_version = str(getattr(fr, "APP_VERSION", "11.10.22")).strip() or "11.10.22"
+    app_version = str(getattr(fr, "APP_VERSION", "11.10.25")).strip() or "11.10.25"
     fr.APP_VERSION = app_version
     fr.APP_TITLE = f"Faithful Remaster v{app_version}"
 

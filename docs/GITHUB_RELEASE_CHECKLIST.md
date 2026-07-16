@@ -1,4 +1,4 @@
-# GitHub Release Checklist for v11.10.22
+# GitHub Release Checklist for v11.10.25
 
 Use this checklist before publishing or replacing release assets.
 
@@ -23,10 +23,10 @@ Use this checklist before publishing or replacing release assets.
 
 ## Application validation
 
-- [ ] App title shows `Faithful Remaster v11.10.22`.
-- [ ] `VERSION` file says `11.10.22`.
-- [ ] `APP_VERSION` resolves to `11.10.22`.
-- [ ] The package ZIP filename says `v11.10.22`.
+- [ ] App title shows `Faithful Remaster v11.10.25`.
+- [ ] `VERSION` file says `11.10.25`.
+- [ ] `APP_VERSION` resolves to `11.10.25`.
+- [ ] The package ZIP filename says `v11.10.25`.
 - [ ] ComfyUI test succeeds.
 - [ ] A small RGB texture test succeeds.
 - [ ] An alpha/mask test route is checked or intentionally skipped.
@@ -39,5 +39,5 @@ Use this checklist before publishing or replacing release assets.
 - [ ] Upload the Windows ZIP asset.
 - [ ] Upload the `.sha256.txt` checksum asset.
 - [ ] Delete older replacement assets if updating the same release.
-- [ ] Paste the release body from `GITHUB_RELEASE_BODY_v11.10.22.md`.
+- [ ] Paste the release body from `GITHUB_RELEASE_BODY_v11.10.25.md`.
 - [ ] Confirm the release description is English-only.

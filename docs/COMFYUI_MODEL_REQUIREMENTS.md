@@ -2,7 +2,7 @@
 
 Faithful Remaster does not include AI model weights. The Windows package includes workflow JSON files, but ComfyUI must already have the required models in the correct folders before those workflows can run.
 
-The bundled v11.10.22 workflows reference these exact filenames. If a filename is different, either rename the model file to match the workflow or open the UI workflow in ComfyUI, choose the model manually, and export/update the matching API workflow.
+The bundled v11.10.25 workflows reference these exact filenames. If a filename is different, either rename the model file to match the workflow or open the UI workflow in ComfyUI, choose the model manually, and export/update the matching API workflow.
 
 ## Required base setup
 
@@ -74,7 +74,7 @@ ComfyUI/models/checkpoints/
 
 ## About Juggernaut XL
 
-The bundled v11.10.22 workflow JSON files currently reference `dreamshaperXL_lightningDPMSDE.safetensors`, not Juggernaut XL.
+The bundled v11.10.25 workflow JSON files currently reference `dreamshaperXL_lightningDPMSDE.safetensors`, not Juggernaut XL.
 
 If you want to use Juggernaut XL instead, download it into:
 

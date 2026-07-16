@@ -2,7 +2,7 @@
 
 This tutorial walks through the safest way to install requirements, create your first texture-remastering profile, process a small test set, review the outputs, and then scale up to Batch Queue.
 
-The tutorial assumes you are using the Windows package for **Faithful Remaster v11.10.22**.
+The tutorial assumes you are using the Windows package for **Faithful Remaster v11.10.25**.
 
 ## 1. What Faithful Remaster does
 
@@ -36,7 +36,7 @@ Read this file before processing:
 docs/COMFYUI_MODEL_REQUIREMENTS.md
 ```
 
-Required for the bundled v11.10.22 workflows:
+Required for the bundled v11.10.25 workflows:
 
 ```text
 ComfyUI/models/upscale_models/4x-UltraSharpV2.safetensors
@@ -305,3 +305,12 @@ Before sharing a texture pack:
 - Press Refresh List.
 - Confirm the profile points to the active dump folder.
 - Confirm the emulator is dumping into the folder you selected.
+
+
+## Sparse alpha/mask quarantine
+
+If a game produces thousands of tiny transparent mask files, keep **Quarantine sparse alpha/mask dumps before watching / each Batch profile** enabled.
+
+When Start Watching begins, Faithful Remaster scans the full dump folder and moves matching tiny sparse alpha/mask dumps into reversible quarantine before the processing queue is built. This is especially useful for Super Mario Strikers-style 80x80 mask floods.
+
+Quarantined files are not deleted. They can be reviewed from the Texture Manager quarantine view.
