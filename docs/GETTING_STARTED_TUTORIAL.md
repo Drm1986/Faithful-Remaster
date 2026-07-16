@@ -49,7 +49,6 @@ Important notes:
 
 - The workflow filenames must match exactly.
 - The bundled RGB workflows currently use `dreamshaperXL_lightningDPMSDE.safetensors` as the SDXL checkpoint.
-- Juggernaut XL is supported only if you edit the workflow checkpoint node and export/update the API workflow.
 - Restart ComfyUI after adding or renaming model files.
 
 Useful official/source links:
@@ -61,7 +60,6 @@ Useful official/source links:
 - RealESRGAN x4plus safetensors: https://huggingface.co/GraydientPlatformAPI/safetensor-upscalers/blob/main/RealESRGAN_x4plus.safetensors
 - ControlNet Tile SDXL: https://huggingface.co/f5aiteam/ComfyUI/blob/main/ControlNet/controlnet-tile-sdxl-1.0.safetensors
 - DreamShaper XL Lightning DPMSDE: https://huggingface.co/oguzm/dreamshaper-xl-lightning-dpmsde/blob/main/dreamshaperXL_lightningDPMSDE.safetensors
-- Optional Juggernaut XL v9 checkpoint: https://huggingface.co/RunDiffusion/Juggernaut-XL-v9/blob/main/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors
 
 ## 4. Extract the package
 
