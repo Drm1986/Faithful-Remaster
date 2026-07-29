@@ -1,74 +1,99 @@
-# Faithful Remaster Changelog
+# Changelog
 
-## v11.10.31
+## Faithful Remaster v11.10.43
 
-### Added
-
-- DuckStation-specific duplicate detection.
-- Live duplicate guard while watching new DuckStation texture dumps.
-- FF8-safe handling for repeated DuckStation texture uploads.
-- Texture Manager actions for ST/STP cleanup in DuckStation profiles.
-- Vertical scrolling in Texture Manager.
-- Batch Queue controls: Skip to next game and Previous game.
-
-### Improved
-
-- Texture Manager scan speed on large dump folders.
-- DuckStation duplicate cleanup now runs before textures are sent to ComfyUI.
-- FF8 thin background strips are preserved instead of being treated as garbage.
-- ST/STP textures are not globally removed; only safe duplicate matches are handled automatically.
-- Cleanup options are now shown only for relevant emulator profiles.
-- Cleanup actions move files to quarantine instead of permanently deleting them.
+This update focuses on safer cleanup, Azahar / 3DS framebuffer handling, Texture Manager batch behavior, and more reliable queue/output detection.
 
 ### Fixed
 
-- Texture Manager action buttons could be inaccessible on smaller screens.
-- Batch Queue state handling around skip, previous, and profile switching.
-- Reduced unnecessary ComfyUI jobs caused by repeated DuckStation dumps.
+- Fixed black RGB textures with useful alpha data being mistaken for empty or blank dumps.
+- Protected alpha-only glyphs, letters, masks, and overlays from safe blank cleanup.
+- Fixed a case where real dumps with missing outputs could remain skipped after cleanup.
+- Fixed Texture Manager mass mode changes affecting only the first selected item visually.
+- Fixed stale queue behavior where already-existing outputs could still be sent to ComfyUI.
+- Fixed `WindowsPath is not JSON serializable` after existing-output detection.
+- Fixed N64 database source path and reduced legacy 404 noise.
 
-## v11.10.30
+### Improved
 
-- Added vertical scrolling to the main Texture Manager body.
-- Improved access to Texture Manager actions on compact screens.
+- Improved Azahar / 3DS padded framebuffer detection:
+  - 512x256 dumps containing a 400x240 viewport;
+  - white fade frames;
+  - black fade frames;
+  - dark transition frames;
+  - washed-out fade frames.
+- Added false-positive protection so colored padded texture atlases are preserved.
+- Improved missing-output detection after quarantine / cleanup.
+- Restored EFB / cutscene cleanup controls across profiles.
+- Improved N64/RMG title detection using current No-Intro database paths and fuzzy folder-name matching.
+- Added Texture Manager copy helpers:
+  - copy texture filename;
+  - copy original path;
+  - copy output path;
+  - copy all details.
 
-## v11.10.29
+### Notes
 
-- Added manual ST/STP mass quarantine actions for DuckStation profiles.
-- Added Texture Manager cleanup actions for dump and replacement folders.
+- Azahar / 3DS cleanup is now safer for Ocarina of Time 3D-style dumps.
+- Alpha masks and glyph sheets should no longer be treated as blank files.
+- Existing outputs should not be reprocessed unnecessarily.
 
-## v11.10.28
+## Faithful Remaster v11.10.42
 
-- Added duplicate-only ST/STP guard.
-- Kept non-duplicated ST/STP textures active.
-- Added replacement-folder duplicate cleanup support.
+- Missing Load Check now uses stricter output checks for the active profile.
+- Processed entries with missing outputs can be requeued correctly.
+- Sparse alpha / mask dumps are no longer hidden from missing-output checks merely because they are mask-like.
 
-## v11.10.27
+## Faithful Remaster v11.10.41
 
-- Added pre-remaster quarantine for matching ST/STP texpage duplicates.
-- Quarantine stores restore metadata and remains reversible.
+- Added false-positive protection for Azahar padded texture atlases.
+- Colored/brown padded 512x256 artwork textures are preserved instead of being quarantined as framebuffers.
 
-## v11.10.26
+## Faithful Remaster v11.10.40
 
-- Improved Texture Manager fast scanning for large dump folders.
-- Deferred expensive visual classification until needed.
+- Added broader Azahar padded framebuffer detection, even when the profile emulator value is generic or missing.
+- Detected common `tex1_512x256_..._1_mip0.png` 3DS framebuffer patterns.
 
-## v11.10.25
+## Faithful Remaster v11.10.39
 
-- Preserved Texture Manager selection during manual and automatic refresh.
-- Reduced selection jumps while watching.
+- Added Azahar fade-frame detection for white, black, dark, and low-variation transition buffers.
 
-## v11.10.24
+## Faithful Remaster v11.10.38
 
-- Added sparse alpha/mask quarantine on Start Watching and Batch Queue profile start.
-- Added live fallback quarantine for sparse alpha/mask dumps.
+- Added Azahar padded 3DS framebuffer detection for 512x256 dumps containing a 400x240 viewport.
 
-## v11.10.23
+## Faithful Remaster v11.10.37
 
-- Added conservative detection for tiny sparse alpha/mask dumps.
-- Added fallback skip behavior for sparse alpha/mask textures.
+- Fixed mass changing texture modes in Texture Manager so multi-select changes refresh correctly.
 
-## v11.10.22
+## Faithful Remaster v11.10.36
 
-- Prepared the first public GitHub release package.
-- Added stronger README, tutorial, release checklist, and ComfyUI setup notes.
-- No bundled workflow JSON files were changed.
+- Restored EFB / cutscene cleanup settings visibility across all profiles.
+
+## Faithful Remaster v11.10.35
+
+- Fixed N64 database source path.
+- Improved RMG / Project64 game-title detection.
+- Added fuzzy N64 folder-title matching.
+
+## Faithful Remaster v11.10.34
+
+- Fixed `WindowsPath is not JSON serializable` crash.
+- Added final existing-output guard before ComfyUI submission.
+- Purged already-existing outputs from queues.
+
+## Faithful Remaster v11.10.33
+
+- Added Texture Manager copy helpers for filenames and paths.
+
+## Faithful Remaster v11.10.32
+
+- Improved existing-output detection when adopting existing Dolphin load packs.
+- Updated N64 database path handling.
+
+## Faithful Remaster v11.10.31
+
+- Added DuckStation / FF8-friendly duplicate handling.
+- Improved Texture Manager scanning and scrolling.
+- Added Batch Queue Skip and Previous controls.
+- Improved quarantine-based cleanup safety.
